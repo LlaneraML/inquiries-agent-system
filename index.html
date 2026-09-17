@@ -1,0 +1,195 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Inquiries Agent - Student & Guest Portal</title>
+  <style>
+    * { box-sizing: border-box; font-family: Arial, sans-serif; }
+    body { background-color: #f4f6f9; margin: 0; padding: 0; display: flex; flex-direction: column; height: 100vh; }
+    .navbar { background-color: #003366; color: white; padding: 15px 20px; display: flex; justify-content: space-between; align-items: center; }
+    .navbar h1 { margin: 0; font-size: 20px; }
+    .user-section { display: flex; align-items: center; gap: 10px; }
+    .user-badge { background: #002244; color: #e0f2fe; padding: 6px 12px; border-radius: 20px; font-size: 13px; font-weight: bold; border: 1px solid #38bdf8; }
+    .btn-auth { background: #38bdf8; color: #002244; border: none; padding: 8px 16px; border-radius: 6px; cursor: pointer; font-weight: bold; font-size: 13px; }
+    .container { flex: 1; max-width: 900px; width: 100%; margin: 20px auto; display: flex; flex-direction: column; background: white; border-radius: 10px; box-shadow: 0 4px 15px rgba(0,0,0,0.08); overflow: hidden; }
+    .quick-chips { padding: 12px 20px; background: #f8fafc; border-bottom: 1px solid #e2e8f0; display: flex; gap: 8px; overflow-x: auto; }
+    .chip { background: #e0f2fe; color: #0369a1; border: 1px solid #bae6fd; padding: 6px 12px; border-radius: 15px; font-size: 12px; font-weight: bold; cursor: pointer; white-space: nowrap; }
+    .chat-box { flex: 1; padding: 20px; overflow-y: auto; display: flex; flex-direction: column; gap: 15px; background: #fafafa; }
+    .message { max-width: 80%; padding: 12px 16px; border-radius: 10px; font-size: 14px; line-height: 1.5; }
+    .message.user { align-self: flex-end; background-color: #003366; color: white; border-bottom-right-radius: 2px; }
+    .message.bot { align-self: flex-start; background-color: #ffffff; color: #1e293b; border: 1px solid #e2e8f0; border-bottom-left-radius: 2px; }
+    .source-tag { display: inline-block; margin-top: 8px; font-size: 10px; font-weight: bold; padding: 2px 6px; border-radius: 4px; text-transform: uppercase; }
+    .tag-rule_based { background: #dcfce7; color: #166534; }
+    .tag-rag_hybrid_gemini { background: #e0e7ff; color: #3730a3; }
+    .tag-fallback_router { background: #fef3c7; color: #92400e; }
+    .input-area { padding: 15px 20px; background: white; border-top: 1px solid #e2e8f0; display: flex; gap: 10px; }
+    .input-area input { flex: 1; padding: 12px; border: 1px solid #cbd5e1; border-radius: 6px; outline: none; }
+    .btn-send { background: #003366; color: white; border: none; padding: 12px 24px; border-radius: 6px; font-weight: bold; cursor: pointer; }
+    .modal-overlay { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5); justify-content: center; align-items: center; }
+    .modal { background: white; padding: 25px; border-radius: 10px; width: 350px; }
+    .form-group { margin-bottom: 15px; }
+    .form-group label { display: block; font-size: 12px; font-weight: bold; margin-bottom: 5px; }
+    .form-group input { width: 100%; padding: 10px; border: 1px solid #cbd5e1; border-radius: 6px; }
+  </style>
+</head>
+<body>
+
+  <div class="navbar">
+    <h1>Inquiries Agent: Information Assistance System</h1>
+    <div class="user-section">
+      <span class="user-badge" id="userBadge">Guest Mode</span>
+      <button class="btn-auth" id="authBtn" onclick="openAuthModal()">Student Login</button>
+    </div>
+  </div>
+
+  <div class="container">
+    <div class="quick-chips">
+      <span class="chip" onclick="quickAsk('What are the general university contact details?')">📞 Contact Info</span>
+      <span class="chip" onclick="quickAsk('Where can I access the student portal?')">🌐 Student Portal</span>
+      <span class="chip" onclick="quickAsk('Where do I pay my tuition fee?')">💳 Tuition & Fees</span>
+    </div>
+
+    <div class="chat-box" id="chatBox">
+      <div class="message bot">Hello! I am your University Information Assistant. Ask me anything about policies, campus events, or faculty directories.</div>
+    </div>
+
+    <div class="input-area">
+      <input type="text" id="userInput" placeholder="Type your inquiry here..." onkeypress="handleKeyPress(event)">
+      <button class="btn-send" onclick="sendMessage()">Send</button>
+    </div>
+  </div>
+
+  <div class="modal-overlay" id="authModal">
+    <div class="modal">
+      <h2 id="modalTitle">Student Login</h2>
+      <div class="form-group" id="fullNameGroup" style="display: none;">
+        <label>Full Name</label>
+        <input type="text" id="regFullName" placeholder="e.g. Marco Llanera">
+      </div>
+      <div class="form-group">
+        <label>Username / Student ID</label>
+        <input type="text" id="authUsername">
+      </div>
+      <div class="form-group">
+        <label>Password</label>
+        <input type="password" id="authPassword">
+      </div>
+      <div id="modalError" style="color:red; font-size:12px;"></div>
+      <div style="display:flex; justify-content:space-between; margin-top:15px;">
+        <span style="font-size:12px; color:blue; cursor:pointer;" id="toggleAuth" onclick="toggleAuthMode()">Need an account? Register</span>
+        <div>
+          <button class="btn-auth" style="background:#cbd5e1;" onclick="closeAuthModal()">Cancel</button>
+          <button class="btn-auth" onclick="submitAuth()">Submit</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+<script>
+  const API_BASE = "http://127.0.0.1:8000";
+  let currentUser = JSON.parse(localStorage.getItem('inquiries_user')) || null;
+  let isRegistering = false;
+
+  function getSessionId() {
+    if (currentUser) return `student_${currentUser.username}`;
+    let guestId = localStorage.getItem('guest_session_id');
+    if (!guestId) {
+      guestId = "guest_" + Math.random().toString(36).substring(2, 9);
+      localStorage.setItem('guest_session_id', guestId);
+    }
+    return guestId;
+  }
+
+  function updateUIState() {
+    const badge = document.getElementById('userBadge');
+    const authBtn = document.getElementById('authBtn');
+    if (currentUser) {
+      badge.innerText = `👤 ${currentUser.full_name} (Student)`;
+      authBtn.innerText = "Logout";
+      authBtn.onclick = logout;
+    } else {
+      badge.innerText = "Guest Mode";
+      authBtn.innerText = "Student Login";
+      authBtn.onclick = openAuthModal;
+    }
+  }
+
+  function openAuthModal() { document.getElementById('authModal').style.display = 'flex'; }
+  function closeAuthModal() { document.getElementById('authModal').style.display = 'none'; }
+  
+  function toggleAuthMode() {
+    isRegistering = !isRegistering;
+    document.getElementById('modalTitle').innerText = isRegistering ? "Register Student Account" : "Student Login";
+    document.getElementById('fullNameGroup').style.display = isRegistering ? "block" : "none";
+  }
+
+  async function submitAuth() {
+    const username = document.getElementById('authUsername').value.trim();
+    const password = document.getElementById('authPassword').value.trim();
+    const fullName = document.getElementById('regFullName').value.trim();
+    const endpoint = isRegistering ? "/auth/register" : "/auth/login";
+    const payload = isRegistering ? { username, password, full_name: fullName } : { username, password };
+
+    try {
+      const res = await fetch(`${API_BASE}${endpoint}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload)
+      });
+      const data = await res.json();
+      if (res.ok) {
+        if (isRegistering) { alert("Registered! Please login."); toggleAuthMode(); } 
+        else {
+          currentUser = data.user;
+          localStorage.setItem('inquiries_user', JSON.stringify(currentUser));
+          updateUIState();
+          closeAuthModal();
+        }
+      } else { document.getElementById('modalError').innerText = data.detail; }
+    } catch (err) { document.getElementById('modalError').innerText = "Server error."; }
+  }
+
+  function logout() {
+    currentUser = null;
+    localStorage.removeItem('inquiries_user');
+    updateUIState();
+  }
+
+  function handleKeyPress(e) { if (e.key === 'Enter') sendMessage(); }
+  function quickAsk(q) { document.getElementById('userInput').value = q; sendMessage(); }
+
+  async function sendMessage() {
+    const input = document.getElementById('userInput');
+    const msg = input.value.trim();
+    if (!msg) return;
+
+    appendMessage(msg, 'user');
+    input.value = '';
+
+    try {
+      const res = await fetch(`${API_BASE}/chat`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ message: msg, session_id: getSessionId() })
+      });
+      const data = await res.json();
+      appendMessage(data.reply, 'bot', data.source);
+    } catch (err) { appendMessage("Error connecting to server.", 'bot', 'error'); }
+  }
+
+  function appendMessage(text, sender, source = '') {
+    const chatBox = document.getElementById('chatBox');
+    const msgDiv = document.createElement('div');
+    msgDiv.className = `message ${sender}`;
+    let content = text;
+    if (source && source !== 'error') content += `<br><span class="source-tag tag-${source}">Source: ${source}</span>`;
+    msgDiv.innerHTML = content;
+    chatBox.appendChild(msgDiv);
+    chatBox.scrollTop = chatBox.scrollHeight;
+  }
+
+  updateUIState();
+</script>
+</body>
+</html>

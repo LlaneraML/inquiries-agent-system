@@ -1,0 +1,80 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Inquiries Agent - Personnel & Admin Dashboard</title>
+  <style>
+    body { font-family: Arial, sans-serif; background: #f4f6f9; margin:0; padding:20px; }
+    .container { max-width: 1000px; margin: 0 auto; }
+    .card { background: white; padding: 20px; border-radius: 8px; box-shadow: 0 2px 10px rgba(0,0,0,0.05); margin-bottom: 20px; }
+    h2 { color: #003366; margin-top: 0; }
+    table { width: 100%; border-collapse: collapse; margin-top: 15px; }
+    th, td { border: 1px solid #cbd5e1; padding: 10px; text-align: left; font-size: 13px; }
+    th { background: #003366; color: white; }
+    .btn { background: #003366; color: white; border: none; padding: 10px 15px; border-radius: 5px; cursor: pointer; font-weight: bold; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="card">
+      <h2>PDF Handbook & Document Ingestion</h2>
+      <input type="file" id="pdfFile" accept=".pdf">
+      <button class="btn" onclick="uploadPDF()">Upload & Index PDF</button>
+      <div id="uploadStatus" style="margin-top:10px; font-weight:bold; font-size:13px;"></div>
+    </div>
+
+    <div class="card">
+      <h2>Unanswered Inquiry Audit Logs</h2>
+      <button class="btn" onclick="loadLogs()">Refresh Audit Logs</button>
+      <table id="logsTable">
+        <thead>
+          <tr>
+            <th>Timestamp</th>
+            <th>Session ID</th>
+            <th>User Query</th>
+            <th>Routed Office</th>
+          </tr>
+        </thead>
+        <tbody></tbody>
+      </table>
+    </div>
+  </div>
+
+<script>
+  const API_BASE = "http://127.0.0.1:8000";
+
+  async function uploadPDF() {
+    const fileInput = document.getElementById('pdfFile');
+    const status = document.getElementById('uploadStatus');
+    if (!fileInput.files[0]) { alert("Please select a PDF file."); return; }
+
+    const formData = new FormData();
+    formData.append("file", fileInput.files[0]);
+    status.innerText = "Indexing document into ChromaDB...";
+
+    try {
+      const res = await fetch(`${API_BASE}/admin/upload-pdf`, { method: "POST", body: formData });
+      const data = await res.json();
+      status.innerText = res.ok ? `Success: ${data.message}` : `Error: ${data.detail}`;
+    } catch (err) { status.innerText = "Upload failed."; }
+  }
+
+  async function loadLogs() {
+    try {
+      const res = await fetch(`${API_BASE}/admin/unanswered-logs`);
+      const data = await res.json();
+      const tbody = document.querySelector("#logsTable tbody");
+      tbody.innerHTML = "";
+
+      data.logs.forEach(log => {
+        const tr = document.createElement("tr");
+        tr.innerHTML = `<td>${log.Timestamp}</td><td>${log.Session_ID}</td><td>${log.User_Query}</td><td>${log.Routed_Office}</td>`;
+        tbody.appendChild(tr);
+      });
+    } catch (err) { console.error("Error loading logs", err); }
+  }
+
+  loadLogs();
+</script>
+</body>
+</html>
