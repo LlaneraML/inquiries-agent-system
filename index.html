@@ -24,6 +24,7 @@
     .tag-rag_hybrid_gemini { background: #e0e7ff; color: #3730a3; }
     .tag-fallback_router { background: #fef3c7; color: #92400e; }
     .input-area { padding: 15px 20px; background: white; border-top: 1px solid #e2e8f0; display: flex; gap: 10px; }
+    .office-select { padding: 10px; border: 1px solid #cbd5e1; border-radius: 6px; background: white; font-size: 13px; outline: none; max-width: 220px; }
     .input-area input { flex: 1; padding: 12px; border: 1px solid #cbd5e1; border-radius: 6px; outline: none; }
     .btn-send { background: #003366; color: white; border: none; padding: 12px 24px; border-radius: 6px; font-weight: bold; cursor: pointer; }
     .modal-overlay { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5); justify-content: center; align-items: center; }
@@ -55,6 +56,9 @@
     </div>
 
     <div class="input-area">
+      <select id="officeSelect" class="office-select">
+        <option value="">-- Target Office (Optional) --</option>
+      </select>
       <input type="text" id="userInput" placeholder="Type your inquiry here..." onkeypress="handleKeyPress(event)">
       <button class="btn-send" onclick="sendMessage()">Send</button>
     </div>
@@ -87,7 +91,7 @@
   </div>
 
 <script>
- const API_BASE = "https://inquiries-agent-system.onrender.com";
+  const API_BASE = "https://inquiries-agent-system.onrender.com";
   let currentUser = JSON.parse(localStorage.getItem('inquiries_user')) || null;
   let isRegistering = false;
 
@@ -122,6 +126,26 @@
     isRegistering = !isRegistering;
     document.getElementById('modalTitle').innerText = isRegistering ? "Register Student Account" : "Student Login";
     document.getElementById('fullNameGroup').style.display = isRegistering ? "block" : "none";
+  }
+
+  async function loadOffices() {
+    const select = document.getElementById("officeSelect");
+    if (!select) return;
+    try {
+      const res = await fetch(`${API_BASE}/offices`);
+      if (res.ok) {
+        const data = await res.json();
+        select.innerHTML = '<option value="">-- Target Office (Optional) --</option>';
+        data.offices.forEach(office => {
+          const opt = document.createElement("option");
+          opt.value = office.id;
+          opt.textContent = `${office.name} (${office.code})`;
+          select.appendChild(opt);
+        });
+      }
+    } catch (err) {
+      console.warn("Could not load offices:", err);
+    }
   }
 
   async function submitAuth() {
@@ -159,55 +183,65 @@
   function handleKeyPress(e) { if (e.key === 'Enter') sendMessage(); }
   function quickAsk(q) { document.getElementById('userInput').value = q; sendMessage(); }
 
- async function sendMessage() {
-    const input = document.getElementById("userInput").value.trim();
-    const officeSelect = document.getElementById("officeSelect");
-    const officeId = officeSelect ? officeSelect.value : null;
-
-    if (!input) return;
-
-    // Display student message in chat
-    displayUserMessage(input);
-    document.getElementById("userInput").value = "";
-
-    try {
-        const response = await fetch(`${API_BASE}/chat`, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-                message: input,
-                session_id: getSessionId(),
-                office_id: officeId ? parseInt(officeId) : null
-            })
-        });
-
-        if (!response.ok) {
-            throw new Error(`Server status ${response.status}`);
-        }
-
-        const data = await response.json();
-        
-        // Use data.reply (NOT data.message)
-        const botText = data.reply || data.message || "No response received.";
-        displayBotMessage(botText, data.source);
-
-    } catch (err) {
-        console.error("Chat error:", err);
-        displayBotMessage("Error connecting to server.", "error");
-    }
-}
   function appendMessage(text, sender, source = '') {
     const chatBox = document.getElementById('chatBox');
     const msgDiv = document.createElement('div');
     msgDiv.className = `message ${sender}`;
-    let content = text;
-    if (source && source !== 'error') content += `<br><span class="source-tag tag-${source}">Source: ${source}</span>`;
+    let content = `<div>${text}</div>`;
+    if (source && source !== 'error') {
+      content += `<span class="source-tag tag-${source}">Source: ${source}</span>`;
+    }
     msgDiv.innerHTML = content;
     chatBox.appendChild(msgDiv);
     chatBox.scrollTop = chatBox.scrollHeight;
   }
 
+  function displayUserMessage(text) {
+    appendMessage(text, 'user');
+  }
+
+  function displayBotMessage(text, source) {
+    appendMessage(text, 'bot', source);
+  }
+
+  async function sendMessage() {
+    const inputField = document.getElementById("userInput");
+    const input = inputField ? inputField.value.trim() : "";
+    const officeSelect = document.getElementById("officeSelect");
+    const officeId = officeSelect && officeSelect.value ? parseInt(officeSelect.value) : null;
+
+    if (!input) return;
+
+    displayUserMessage(input);
+    if (inputField) inputField.value = "";
+
+    try {
+      const response = await fetch(`${API_BASE}/chat`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          message: input,
+          session_id: getSessionId(),
+          office_id: officeId
+        })
+      });
+
+      if (!response.ok) {
+        throw new Error(`Server status ${response.status}`);
+      }
+
+      const data = await response.json();
+      const botText = data.reply || data.message || "No response received.";
+      displayBotMessage(botText, data.source);
+
+    } catch (err) {
+      console.error("Chat error:", err);
+      displayBotMessage("Error connecting to server.", "error");
+    }
+  }
+
   updateUIState();
+  loadOffices();
 </script>
 </body>
 </html>
