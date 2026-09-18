@@ -17,6 +17,7 @@ from enum import Enum
 from typing import Optional, List
 from fastapi import FastAPI, Depends, HTTPException, status
 from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel
 
 load_dotenv()
 
@@ -142,6 +143,10 @@ class ChatResponse(BaseModel):
     session_id: str
     department_forward: str | None = None
     response_time_seconds: float
+
+class ResolveLogRequest(BaseModel):
+    log_id: int
+    reply: str
 
 HARDCODED_FAQS = {
     "hello": "Hello! I am the Inquiries Agent. How can I assist you today?",
@@ -458,6 +463,26 @@ def get_office_unanswered_logs(current_user: dict = Depends(require_roles([UserR
             })
 
     return {"unanswered_logs": logs}
+
+@app.post("/admin/resolve-log", dependencies=[Depends(require_roles([UserRole.ADMIN, UserRole.EMPLOYEE]))])
+def resolve_unanswered_log(payload: ResolveLogRequest):
+    conn = get_db_connection()
+    if not conn:
+        raise HTTPException(status_code=500, detail="Database connection failed")
+    
+    cursor = conn.cursor()
+    cursor.execute(
+        """
+        UPDATE unanswered_logs 
+        SET status = 'resolved', office_reply = %s, resolved_at = NOW() 
+        WHERE id = %s
+        """,
+        (payload.reply, payload.log_id)
+    )
+    conn.commit()
+    cursor.close()
+    conn.close()
+    return {"message": "Inquiry resolved successfully."}
 
 @app.post("/admin/upload-pdf")
 async def upload_pdf_handbook(file: UploadFile = File(...)):
