@@ -35,10 +35,11 @@ def get_db_connection():
             database=DB_NAME,
             port=DB_PORT,
             cursorclass=pymysql.cursors.DictCursor,
-            autocommit=True
+            autocommit=True,
+            ssl={"ssl_mode": "VERIFY_IDENTITY"}
         )
     except Exception as e:
-        print(f"⚠️ MySQL Connection Error: {e}")
+        print(f"⚠️ TiDB Connection Error: {e}")
         return None
 
 def hash_password(password: str) -> str:
