@@ -159,25 +159,43 @@
   function handleKeyPress(e) { if (e.key === 'Enter') sendMessage(); }
   function quickAsk(q) { document.getElementById('userInput').value = q; sendMessage(); }
 
-  async function sendMessage() {
-    const input = document.getElementById('userInput');
-    const msg = input.value.trim();
-    if (!msg) return;
+ async function sendMessage() {
+    const input = document.getElementById("userInput").value.trim();
+    const officeSelect = document.getElementById("officeSelect");
+    const officeId = officeSelect ? officeSelect.value : null;
 
-    appendMessage(msg, 'user');
-    input.value = '';
+    if (!input) return;
+
+    // Display student message in chat
+    displayUserMessage(input);
+    document.getElementById("userInput").value = "";
 
     try {
-      const res = await fetch(`${API_BASE}/chat`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ message: msg, session_id: getSessionId() })
-      });
-      const data = await res.json();
-      appendMessage(data.reply, 'bot', data.source);
-    } catch (err) { appendMessage("Error connecting to server.", 'bot', 'error'); }
-  }
+        const response = await fetch(`${API_BASE}/chat`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+                message: input,
+                session_id: getSessionId(),
+                office_id: officeId ? parseInt(officeId) : null
+            })
+        });
 
+        if (!response.ok) {
+            throw new Error(`Server status ${response.status}`);
+        }
+
+        const data = await response.json();
+        
+        // Use data.reply (NOT data.message)
+        const botText = data.reply || data.message || "No response received.";
+        displayBotMessage(botText, data.source);
+
+    } catch (err) {
+        console.error("Chat error:", err);
+        displayBotMessage("Error connecting to server.", "error");
+    }
+}
   function appendMessage(text, sender, source = '') {
     const chatBox = document.getElementById('chatBox');
     const msgDiv = document.createElement('div');
