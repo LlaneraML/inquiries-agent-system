@@ -4,23 +4,25 @@ import io
 import re
 import hashlib
 from datetime import datetime
-from fastapi import FastAPI, HTTPException, UploadFile, File
+from enum import Enum
+from typing import Optional, List
+
+from fastapi import FastAPI, Depends, HTTPException, status, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from dotenv import load_dotenv
+
 import chromadb
 from google import genai
 from pypdf import PdfReader
 from rank_bm25 import BM25Okapi
 import pymysql
-from enum import Enum
-from typing import Optional, List
-from fastapi import FastAPI, Depends, HTTPException, status
-from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
 
 load_dotenv()
 
+# =========================================================
+# CONFIGURATION & ENVIRONMENT VARIABLES
+# =========================================================
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 if not GEMINI_API_KEY:
     raise ValueError("GEMINI_API_KEY is missing from .env file.")
@@ -50,10 +52,22 @@ def get_db_connection():
 def hash_password(password: str) -> str:
     return hashlib.sha256(password.encode()).hexdigest()
 
+# =========================================================
+# DATABASE TABLE INITIALIZATION
+# =========================================================
 def init_mysql_tables():
     conn = get_db_connection()
     if conn:
         with conn.cursor() as cursor:
+            cursor.execute("""
+            CREATE TABLE IF NOT EXISTS offices (
+                id INT AUTO_INCREMENT PRIMARY KEY,
+                name VARCHAR(100) NOT NULL UNIQUE,
+                code VARCHAR(20) NOT NULL UNIQUE,
+                description TEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+            """)
             cursor.execute("""
             CREATE TABLE IF NOT EXISTS users (
                 id INT AUTO_INCREMENT PRIMARY KEY,
@@ -61,7 +75,9 @@ def init_mysql_tables():
                 password VARCHAR(255) NOT NULL,
                 full_name VARCHAR(100) NOT NULL,
                 role VARCHAR(20) DEFAULT 'student',
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                office_id INT NULL,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (office_id) REFERENCES offices(id) ON DELETE SET NULL
             );
             """)
             cursor.execute("""
@@ -77,16 +93,23 @@ def init_mysql_tables():
             cursor.execute("""
             CREATE TABLE IF NOT EXISTS unanswered_logs (
                 id INT AUTO_INCREMENT PRIMARY KEY,
-                timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
                 session_id VARCHAR(100) NOT NULL,
-                user_query TEXT NOT NULL,
-                routed_office VARCHAR(255) NOT NULL
+                user_message TEXT NOT NULL,
+                office_id INT NULL,
+                status ENUM('pending', 'resolved') DEFAULT 'pending',
+                office_reply TEXT NULL,
+                resolved_at TIMESTAMP NULL,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (office_id) REFERENCES offices(id) ON DELETE SET NULL
             );
             """)
         conn.close()
 
 init_mysql_tables()
 
+# =========================================================
+# FASTAPI APP & AUTHENTICATION SETUP
+# =========================================================
 app = FastAPI(title="Inquiries Agent API", version="2.1.0")
 
 app.add_middleware(
@@ -103,10 +126,9 @@ class UserRole(str, Enum):
     EMPLOYEE = "employee"
 
 def get_current_user():
-    # Placeholder user context (replace with real auth logic later)
+    # Placeholder user context (returns admin role for testing)
     return {"username": "admin", "role": "admin"}
 
-# Role Verification Dependency
 def require_roles(allowed_roles: List[UserRole]):
     def role_checker(current_user: dict = Depends(get_current_user)):
         if current_user.get("role") not in [r.value for r in allowed_roles]:
@@ -117,13 +139,18 @@ def require_roles(allowed_roles: List[UserRole]):
         return current_user
     return role_checker
 
-
+# =========================================================
+# AI CLIENT & VECTOR DB SETUP
+# =========================================================
 ai_client = genai.Client(api_key=GEMINI_API_KEY)
 chroma_client = chromadb.PersistentClient(path="./chroma_db")
 collection = chroma_client.get_or_create_collection(name="university_knowledge_base")
 
 MAX_HISTORY_TURNS = 6
 
+# =========================================================
+# PYDANTIC REQUEST & RESPONSE SCHEMAS
+# =========================================================
 class RegisterRequest(BaseModel):
     username: str
     password: str
@@ -135,13 +162,14 @@ class LoginRequest(BaseModel):
 
 class ChatRequest(BaseModel):
     message: str
-    session_id: str = "guest_session"
+    session_id: str
+    office_id: Optional[int] = None
 
 class ChatResponse(BaseModel):
     reply: str
     source: str
     session_id: str
-    department_forward: str | None = None
+    department_forward: Optional[str] = None
     response_time_seconds: float
 
 class ResolveLogRequest(BaseModel):
@@ -155,25 +183,9 @@ HARDCODED_FAQS = {
     "portal": "You can access the student portal at: https://portal.university.edu.ph"
 }
 
-OFFICE_DIRECTORY = {
-    "enrollment": "Registrar's Office (registrar@university.edu.ph)",
-    "tuition": "Accounting & Finance Office (finance@university.edu.ph)",
-    "fee": "Accounting & Finance Office (finance@university.edu.ph)",
-    "dorm": "Student Affairs Office (sao@university.edu.ph)",
-    "club": "Student Affairs Office (sao@university.edu.ph)",
-    "professor": "College Dean's Office / Academic Affairs (academic.affairs@university.edu.ph)",
-    "faculty": "College Dean's Office / Academic Affairs (academic.affairs@university.edu.ph)",
-    "event": "Public Relations & Campus Events Office (events@university.edu.ph)",
-    "default": "General Helpdesk (helpdesk@university.edu.ph)"
-}
-
-def detect_office_routing(query: str) -> str:
-    query_lower = query.lower()
-    for keyword, office in OFFICE_DIRECTORY.items():
-        if keyword in query_lower:
-            return office
-    return OFFICE_DIRECTORY["default"]
-
+# =========================================================
+# HELPER FUNCTIONS
+# =========================================================
 def save_chat_turn(session_id: str, role: str, content: str):
     conn = get_db_connection()
     if conn:
@@ -197,14 +209,19 @@ def get_session_history_from_db(session_id: str) -> list[dict[str, str]]:
     conn.close()
     return list(reversed(rows))
 
-def log_unanswered_query_to_db(session_id: str, query: str, routed_office: str):
+def log_unanswered_query_to_db(session_id: str, user_message: str, office_id: Optional[int] = None):
     conn = get_db_connection()
     if conn:
-        with conn.cursor() as cursor:
-            cursor.execute(
-                "INSERT INTO unanswered_logs (timestamp, session_id, user_query, routed_office) VALUES (%s, %s, %s, %s)",
-                (datetime.now(), session_id, query, routed_office)
-            )
+        cursor = conn.cursor()
+        cursor.execute(
+            """
+            INSERT INTO unanswered_logs (session_id, user_message, office_id, status)
+            VALUES (%s, %s, %s, 'pending')
+            """,
+            (session_id, user_message, office_id)
+        )
+        conn.commit()
+        cursor.close()
         conn.close()
 
 def tokenize(text: str) -> list[str]:
@@ -228,6 +245,9 @@ def reciprocal_rank_fusion(vector_docs: list[str], bm25_docs: list[str], k: int 
     sorted_docs = sorted(scores.items(), key=lambda item: item[1], reverse=True)
     return [doc for doc, score in sorted_docs[:top_n]]
 
+# =========================================================
+# API ENDPOINTS
+# =========================================================
 @app.get("/")
 def root():
     return {"status": "Online", "message": "Inquiries Agent System API is operational."}
@@ -315,16 +335,14 @@ def chat_endpoint(request: ChatRequest):
         retrieved_docs = reciprocal_rank_fusion(vector_docs, bm25_docs, top_n=3)
 
     if not retrieved_docs:
-        target_office = detect_office_routing(user_query)
-        log_unanswered_query_to_db(session_id, user_query, target_office)
-        fallback_msg = f"No official university record found for this topic. Your inquiry has been routed to: {target_office}."
+        log_unanswered_query_to_db(session_id, user_query, request.office_id)
+        fallback_msg = "No official university record found for this topic. Your inquiry has been routed to the department queue."
         save_chat_turn(session_id, "user", user_query)
         save_chat_turn(session_id, "assistant", fallback_msg)
         return ChatResponse(
             reply=fallback_msg,
             source="fallback_router",
             session_id=session_id,
-            department_forward=target_office,
             response_time_seconds=round(time.time() - start_time, 4)
         )
 
@@ -358,16 +376,14 @@ def chat_endpoint(request: ChatRequest):
         answer = response.text.strip()
 
         if "UNANSWERED" in answer.upper():
-            target_office = detect_office_routing(user_query)
-            log_unanswered_query_to_db(session_id, user_query, target_office)
-            fallback_msg = f"This detail is not explicitly found in our public university records. Your request was forwarded to: {target_office}."
+            log_unanswered_query_to_db(session_id, user_query, request.office_id)
+            fallback_msg = "This detail is not explicitly found in our public university records. Your request was forwarded to the department queue."
             save_chat_turn(session_id, "user", user_query)
             save_chat_turn(session_id, "assistant", fallback_msg)
             return ChatResponse(
                 reply=fallback_msg,
                 source="fallback_router",
                 session_id=session_id,
-                department_forward=target_office,
                 response_time_seconds=round(time.time() - start_time, 4)
             )
 
@@ -383,8 +399,10 @@ def chat_endpoint(request: ChatRequest):
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Gemini API Error: {str(e)}")
-    
-  # Office Management Endpoints
+
+# =========================================================
+# OFFICE MANAGEMENT ENDPOINTS
+# =========================================================
 @app.post("/offices", dependencies=[Depends(require_roles([UserRole.ADMIN]))])
 def create_office(name: str, code: str, description: Optional[str] = None):
     conn = get_db_connection()
@@ -413,7 +431,6 @@ def list_offices():
     cursor.close()
     conn.close()
     
-    # Map rows cleanly so VS Code and FastAPI handle JSON serialization without warnings
     offices = []
     for row in rows:
         if isinstance(row, dict):
@@ -428,6 +445,9 @@ def list_offices():
 
     return {"offices": offices}
 
+# =========================================================
+# UNANSWERED LOG RESOLUTION ENDPOINTS
+# =========================================================
 @app.get("/admin/unanswered")
 def get_office_unanswered_logs(current_user: dict = Depends(require_roles([UserRole.ADMIN, UserRole.EMPLOYEE]))):
     conn = get_db_connection()
@@ -484,6 +504,9 @@ def resolve_unanswered_log(payload: ResolveLogRequest):
     conn.close()
     return {"message": "Inquiry resolved successfully."}
 
+# =========================================================
+# PDF HANDBOOK UPLOAD ENDPOINT
+# =========================================================
 @app.post("/admin/upload-pdf")
 async def upload_pdf_handbook(file: UploadFile = File(...)):
     if not file.filename or not file.filename.lower().endswith(".pdf"):
@@ -524,12 +547,11 @@ async def upload_pdf_handbook(file: UploadFile = File(...)):
             contents=batch_chunks,
         )
         
-        # Explicitly cast to list and bypass VS Code's strict type hint warning
         batch_embeddings = [list(emb.values) for emb in emb_response.embeddings]  # type: ignore
         
         collection.upsert(
             documents=batch_chunks,
-            embeddings=batch_embeddings, # type: ignore
+            embeddings=batch_embeddings,  # type: ignore
             metadatas=batch_metadatas,
             ids=batch_ids
         )
