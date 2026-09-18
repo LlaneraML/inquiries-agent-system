@@ -13,6 +13,10 @@ from google import genai
 from pypdf import PdfReader
 from rank_bm25 import BM25Okapi
 import pymysql
+from enum import Enum
+from typing import Optional, List
+from fastapi import FastAPI, Depends, HTTPException, status
+from fastapi.middleware.cors import CORSMiddleware
 
 load_dotenv()
 
@@ -91,6 +95,27 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+class UserRole(str, Enum):
+    ADMIN = "admin"
+    STUDENT = "student"
+    EMPLOYEE = "employee"
+
+def get_current_user():
+    # Placeholder user context (replace with real auth logic later)
+    return {"username": "admin", "role": "admin"}
+
+# Role Verification Dependency
+def require_roles(allowed_roles: List[UserRole]):
+    def role_checker(current_user: dict = Depends(get_current_user)):
+        if current_user.get("role") not in [r.value for r in allowed_roles]:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Access denied for your role."
+            )
+        return current_user
+    return role_checker
+
 
 ai_client = genai.Client(api_key=GEMINI_API_KEY)
 chroma_client = chromadb.PersistentClient(path="./chroma_db")
@@ -353,6 +378,50 @@ def chat_endpoint(request: ChatRequest):
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Gemini API Error: {str(e)}")
+    
+  # Office Management Endpoints
+@app.post("/offices", dependencies=[Depends(require_roles([UserRole.ADMIN]))])
+def create_office(name: str, code: str, description: Optional[str] = None):
+    conn = get_db_connection()
+    if not conn:
+        raise HTTPException(status_code=500, detail="Database connection failed")
+    
+    cursor = conn.cursor()
+    cursor.execute(
+        "INSERT INTO offices (name, code, description) VALUES (%s, %s, %s)",
+        (name, code, description)
+    )
+    conn.commit()
+    cursor.close()
+    conn.close()
+    return {"message": f"Office '{name}' created successfully."}
+
+@app.get("/offices")
+def list_offices():
+    conn = get_db_connection()
+    if not conn:
+        raise HTTPException(status_code=500, detail="Database connection failed")
+    
+    cursor = conn.cursor()
+    cursor.execute("SELECT id, name, code, description FROM offices")
+    rows = cursor.fetchall()
+    cursor.close()
+    conn.close()
+    
+    # Map rows cleanly so VS Code and FastAPI handle JSON serialization without warnings
+    offices = []
+    for row in rows:
+        if isinstance(row, dict):
+            offices.append(row)
+        else:
+            offices.append({
+                "id": row[0],
+                "name": row[1],
+                "code": row[2],
+                "description": row[3]
+            })
+
+    return {"offices": offices}
 
 @app.get("/admin/unanswered-logs")
 def get_unanswered_logs():
