@@ -423,25 +423,45 @@ def list_offices():
 
     return {"offices": offices}
 
-@app.get("/admin/unanswered-logs")
-def get_unanswered_logs():
+@app.get("/admin/unanswered")
+def get_office_unanswered_logs(current_user: dict = Depends(require_roles([UserRole.ADMIN, UserRole.EMPLOYEE]))):
     conn = get_db_connection()
     if not conn:
-        return {"total_unanswered": 0, "logs": []}
-    with conn.cursor() as cursor:
-        cursor.execute("SELECT timestamp as Timestamp, session_id as Session_ID, user_query as User_Query, routed_office as Routed_Office FROM unanswered_logs ORDER BY id DESC")
-        logs = cursor.fetchall()
+        raise HTTPException(status_code=500, detail="Database connection failed")
+    
+    cursor = conn.cursor()
+    
+    if current_user.get("role") == "employee" and current_user.get("office_id"):
+        cursor.execute(
+            "SELECT id, session_id, user_message, office_id, status, created_at FROM unanswered_logs WHERE office_id = %s AND status = 'pending' ORDER BY created_at DESC", 
+            (current_user["office_id"],)
+        )
+    else:
+        cursor.execute("SELECT id, session_id, user_message, office_id, status, created_at FROM unanswered_logs WHERE status = 'pending' ORDER BY created_at DESC")
+        
+    rows = cursor.fetchall()
+    cursor.close()
     conn.close()
 
-    for log in logs:
-        if isinstance(log["Timestamp"], datetime):
-            log["Timestamp"] = log["Timestamp"].strftime("%Y-%m-%d %H:%M:%S")
+    logs = []
+    for row in rows:
+        if isinstance(row, dict):
+            logs.append(row)
+        else:
+            logs.append({
+                "id": row[0],
+                "session_id": row[1],
+                "user_message": row[2],
+                "office_id": row[3],
+                "status": row[4],
+                "created_at": str(row[5]) if len(row) > 5 else None
+            })
 
-    return {"total_unanswered": len(logs), "logs": logs}
+    return {"unanswered_logs": logs}
 
 @app.post("/admin/upload-pdf")
 async def upload_pdf_handbook(file: UploadFile = File(...)):
-    if not file.filename.endswith(".pdf"):
+    if not file.filename or not file.filename.lower().endswith(".pdf"):
         raise HTTPException(status_code=400, detail="Only PDF files are accepted.")
 
     start_time = time.time()
@@ -478,11 +498,13 @@ async def upload_pdf_handbook(file: UploadFile = File(...)):
             model="gemini-embedding-001",
             contents=batch_chunks,
         )
-        embeddings = [emb.values for emb in emb_response.embeddings]
-
+        
+        # Explicitly cast to list and bypass VS Code's strict type hint warning
+        batch_embeddings = [list(emb.values) for emb in emb_response.embeddings]  # type: ignore
+        
         collection.upsert(
             documents=batch_chunks,
-            embeddings=embeddings,
+            embeddings=batch_embeddings, # type: ignore
             metadatas=batch_metadatas,
             ids=batch_ids
         )
