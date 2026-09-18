@@ -491,6 +491,17 @@ def resolve_unanswered_log(payload: ResolveLogRequest):
         raise HTTPException(status_code=500, detail="Database connection failed")
     
     cursor = conn.cursor()
+    # 1. Fetch user_message for embedding
+    cursor.execute("SELECT user_message FROM unanswered_logs WHERE id = %s", (payload.log_id,))
+    row = cursor.fetchone()
+    if not row:
+        cursor.close()
+        conn.close()
+        raise HTTPException(status_code=404, detail="Log entry not found")
+    
+    user_message = row['user_message'] if isinstance(row, dict) else row[0]
+
+    # 2. Update status in MySQL
     cursor.execute(
         """
         UPDATE unanswered_logs 
@@ -500,17 +511,63 @@ def resolve_unanswered_log(payload: ResolveLogRequest):
         (payload.reply, payload.log_id)
     )
     conn.commit()
-    affected_rows = cursor.rowcount
     cursor.close()
     conn.close()
 
-    if affected_rows == 0:
-        raise HTTPException(
-            status_code=404, 
-            detail=f"Inquiry log ID {payload.log_id} not found or already resolved."
+    # 3. Automatically index Q&A into ChromaDB so RAG learns the answer
+    try:
+        qa_doc = f"Question: {user_message}\nAnswer: {payload.reply}"
+        emb_res = ai_client.models.embed_content(
+            model="gemini-embedding-001",
+            contents=qa_doc,
         )
+        embedding = list(emb_res.embeddings[0].values)
+        collection.upsert(
+            documents=[qa_doc],
+            embeddings=[embedding],  # type: ignore
+            metadatas=[{"source": "resolved_inquiry", "log_id": payload.log_id}],
+            ids=[f"resolved_log_{payload.log_id}"]
+        )
+    except Exception as e:
+        print(f"⚠️ ChromaDB indexing warning: {e}")
 
-    return {"message": "Inquiry resolved successfully."}
+    return {"message": "Inquiry resolved and added to knowledge base successfully."}
+
+@app.post("/admin/sync-resolved-to-chroma", dependencies=[Depends(require_roles([UserRole.ADMIN]))])
+def sync_resolved_to_chroma():
+    """One-time sync to push all previously resolved MySQL logs into ChromaDB."""
+    conn = get_db_connection()
+    if not conn:
+        raise HTTPException(status_code=500, detail="Database connection failed")
+    
+    cursor = conn.cursor()
+    cursor.execute("SELECT id, user_message, office_reply FROM unanswered_logs WHERE status = 'resolved'")
+    rows = cursor.fetchall()
+    cursor.close()
+    conn.close()
+
+    count = 0
+    for row in rows:
+        log_id = row['id'] if isinstance(row, dict) else row[0]
+        user_msg = row['user_message'] if isinstance(row, dict) else row[1]
+        reply = row['office_reply'] if isinstance(row, dict) else row[2]
+
+        if user_msg and reply:
+            qa_doc = f"Question: {user_msg}\nAnswer: {reply}"
+            emb_res = ai_client.models.embed_content(
+                model="gemini-embedding-001",
+                contents=qa_doc,
+            )
+            embedding = list(emb_res.embeddings[0].values)
+            collection.upsert(
+                documents=[qa_doc],
+                embeddings=[embedding],  # type: ignore
+                metadatas=[{"source": "resolved_inquiry", "log_id": log_id}],
+                ids=[f"resolved_log_{log_id}"]
+            )
+            count += 1
+
+    return {"message": f"Successfully synced {count} resolved inquiries into ChromaDB vector store."}
 
 # =========================================================
 # PDF HANDBOOK UPLOAD ENDPOINT
