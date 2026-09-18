@@ -40,6 +40,16 @@
     </div>
   </div>
 
+  <div class="container my-4">
+    <div class="d-flex justify-content-between align-items-center mb-3">
+        <h3>Pending Department Inquiries</h3>
+        <button class="btn btn-outline-secondary btn-sm" onclick="loadPendingLogs()">Refresh Queue</button>
+    </div>
+    <div id="pendingLogsContainer">
+        <p class="text-muted">Loading pending inquiries...</p>
+    </div>
+</div>
+
 <script>
   const API_BASE = "https://inquiries-agent-system.onrender.com";
 
@@ -75,6 +85,84 @@
   }
 
   loadLogs();
+
+  async function loadPendingLogs() {
+    const container = document.getElementById("pendingLogsContainer");
+    
+    try {
+        const response = await fetch(`${API_BASE}/admin/unanswered`);
+        const data = await response.json();
+        
+        if (!data.unanswered_logs || data.unanswered_logs.length === 0) {
+            container.innerHTML = `
+                <div class="alert alert-success">No pending inquiries for your office. All clear!</div>
+            `;
+            return;
+        }
+
+        container.innerHTML = data.unanswered_logs.map(log => `
+            <div class="card mb-3 shadow-sm border-start border-warning border-4" id="log-card-${log.id}">
+                <div class="card-body">
+                    <div class="d-flex justify-content-between align-items-start mb-2">
+                        <h6 class="card-subtitle text-muted">Inquiry #${log.id} • Session: ${escapeHtml(log.session_id)}</h6>
+                        <span class="badge bg-warning text-dark">Pending</span>
+                    </div>
+                    <p class="card-text fs-5"><strong>User Question:</strong> "${escapeHtml(log.user_message)}"</p>
+                    <small class="text-muted d-block mb-3">Received: ${log.created_at || 'Recently'}</small>
+                    
+                    <div class="input-group">
+                        <input type="text" id="reply-input-${log.id}" class="form-control" placeholder="Type official office answer...">
+                        <button class="btn btn-primary" onclick="submitOfficeReply(${log.id})">Send Answer</button>
+                    </div>
+                </div>
+            </div>
+        `).join('');
+
+    } catch (err) {
+        container.innerHTML = `<div class="alert alert-danger">Error loading queue: ${err.message}</div>`;
+    }
+}
+
+async function submitOfficeReply(logId) {
+    const replyInput = document.getElementById(`reply-input-${logId}`);
+    const replyText = replyInput.value.trim();
+
+    if (!replyText) {
+        alert("Please enter a response before submitting.");
+        return;
+    }
+
+    try {
+        const res = await fetch(`${API_BASE}/admin/resolve-log`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ log_id: logId, reply: replyText })
+        });
+
+        if (res.ok) {
+            // Remove resolved card from UI without full page refresh
+            const logCard = document.getElementById(`log-card-${logId}`);
+            if (logCard) logCard.remove();
+            
+            // Check if queue is now empty
+            const container = document.getElementById("pendingLogsContainer");
+            if (container.children.length === 0) {
+                container.innerHTML = `<div class="alert alert-success">No pending inquiries for your office. All clear!</div>`;
+            }
+        } else {
+            alert("Failed to submit reply. Check server logs.");
+        }
+    } catch (err) {
+        alert(`Error: ${err.message}`);
+    }
+}
+
+function escapeHtml(str) {
+    return str ? str.replace(/[&<>"']/g, m => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'}[m])) : '';
+}
+
+// Automatically load queue on page load
+document.addEventListener("DOMContentLoaded", loadPendingLogs);
 </script>
 </body>
 </html>
