@@ -500,8 +500,16 @@ def resolve_unanswered_log(payload: ResolveLogRequest):
         (payload.reply, payload.log_id)
     )
     conn.commit()
+    affected_rows = cursor.rowcount
     cursor.close()
     conn.close()
+
+    if affected_rows == 0:
+        raise HTTPException(
+            status_code=404, 
+            detail=f"Inquiry log ID {payload.log_id} not found or already resolved."
+        )
+
     return {"message": "Inquiry resolved successfully."}
 
 # =========================================================
