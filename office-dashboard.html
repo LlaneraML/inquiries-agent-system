@@ -1,0 +1,148 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Office Sub-Admin Portal</title>
+  <style>
+    * { box-sizing: border-box; font-family: Arial, sans-serif; }
+    body { background-color: #f4f6f9; margin: 0; padding: 0; }
+    .navbar { background-color: #003366; color: white; padding: 15px 25px; display: flex; justify-content: space-between; align-items: center; }
+    .office-badge { background: #38bdf8; color: #002244; padding: 6px 12px; border-radius: 15px; font-weight: bold; font-size: 13px; }
+    .container { max-width: 1100px; margin: 25px auto; background: white; padding: 25px; border-radius: 10px; box-shadow: 0 2px 10px rgba(0,0,0,0.05); }
+    table { width: 100%; border-collapse: collapse; margin-top: 15px; font-size: 13px; }
+    th, td { border: 1px solid #e2e8f0; padding: 12px; text-align: left; }
+    th { background: #f8fafc; }
+    .btn-primary { background: #003366; color: white; border: none; padding: 8px 16px; border-radius: 6px; font-weight: bold; cursor: pointer; }
+    .btn-logout { background: #ef4444; color: white; border: none; padding: 6px 12px; border-radius: 6px; cursor: pointer; }
+  </style>
+</head>
+<body>
+
+  <div class="navbar">
+    <div>
+      <h1 id="officeHeaderTitle" style="margin:0; font-size: 20px;">Department Office Portal</h1>
+      <small id="staffName" style="color: #93c5fd;">Logged in Staff</small>
+    </div>
+    <div style="display:flex; align-items:center; gap: 12px;">
+      <span class="office-badge" id="officeBadge">Loading Office...</span>
+      <button class="btn-logout" onclick="logout()">Logout</button>
+    </div>
+  </div>
+
+  <div class="container">
+    <h2 style="color: #003366; margin-top: 0;">Pending Department Inquiries</h2>
+    <p style="color: #64748b; font-size: 13px;">Below are questions routed specifically to your department. Replying will answer the student and train the AI chatbot.</p>
+
+    <table>
+      <thead>
+        <tr>
+          <th style="width: 50px;">ID</th>
+          <th>Student Query</th>
+          <th style="width: 120px;">Date Sent</th>
+          <th style="width: 300px;">Submit Resolution</th>
+        </tr>
+      </thead>
+      <tbody id="officeQueueBody">
+        <tr><td colspan="4" style="text-align: center;">Loading department queries...</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+<script>
+  const API_BASE = "https://inquiries-agent-system.onrender.com";
+  const currentUser = JSON.parse(localStorage.getItem('inquiries_user')) || null;
+
+  async function initOfficeDashboard() {
+    // 1. Verify Authentication & Role
+    if (!currentUser || (currentUser.role !== 'employee' && currentUser.role !== 'admin')) {
+      alert("Unauthorized access. Please login with an office staff account.");
+      window.location.href = "index.html";
+      return;
+    }
+
+    document.getElementById("staffName").innerText = `Staff: ${currentUser.full_name}`;
+
+    // 2. Fetch Office Information Dynamically
+    if (currentUser.office_id) {
+      try {
+        const res = await fetch(`${API_BASE}/offices/${currentUser.office_id}`);
+        if (res.ok) {
+          const office = await res.json();
+          document.getElementById("officeHeaderTitle").innerText = `${office.name} Portal`;
+          document.getElementById("officeBadge").innerText = `${office.code} Department`;
+        }
+      } catch (err) {
+        console.error("Could not load office metadata", err);
+      }
+    } else {
+      document.getElementById("officeBadge").innerText = "PICO Central Super Admin";
+    }
+
+    // 3. Load Queue Filtered by Staff's office_id
+    loadDepartmentQueue();
+  }
+
+  async function loadDepartmentQueue() {
+    const tbody = document.getElementById("officeQueueBody");
+    const officeFilter = currentUser.office_id ? `&office_id=${currentUser.office_id}` : '';
+
+    try {
+      const res = await fetch(`${API_BASE}/admin/unanswered?status=pending${officeFilter}`);
+      if (!res.ok) throw new Error("Failed to load queue");
+      const data = await res.json();
+      
+      const logs = data.logs || [];
+      if (logs.length === 0) {
+        tbody.innerHTML = `<tr><td colspan="4" style="text-align: center; color: #166534;">🎉 No pending inquiries for your office!</td></tr>`;
+        return;
+      }
+
+      tbody.innerHTML = logs.map(log => `
+        <tr>
+          <td>${log.id}</td>
+          <td><strong>${log.user_message}</strong><br><small style="color:#64748b;">Session: ${log.session_id}</small></td>
+          <td><small>${new Date(log.created_at).toLocaleDateString()}</small></td>
+          <td>
+            <textarea id="reply-${log.id}" placeholder="Type official office response..." style="width:100%; padding:6px; border-radius:4px; border:1px solid #cbd5e1; margin-bottom:6px; font-size:12px;"></textarea>
+            <button class="btn-primary" onclick="resolveInquiry(${log.id})">Send Reply</button>
+          </td>
+        </tr>
+      `).join('');
+
+    } catch (err) {
+      tbody.innerHTML = `<tr><td colspan="4" style="text-align: center; color: red;">Error loading department queue.</td></tr>`;
+    }
+  }
+
+  async function resolveInquiry(logId) {
+    const replyText = document.getElementById(`reply-${logId}`).value.trim();
+    if (!replyText) { alert("Please type an answer before sending."); return; }
+
+    try {
+      const res = await fetch(`${API_BASE}/admin/resolve-log`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ log_id: logId, reply: replyText })
+      });
+
+      if (res.ok) {
+        alert("Inquiry answered and synced to AI Knowledge Base!");
+        loadDepartmentQueue();
+      } else {
+        alert("Failed to submit resolution.");
+      }
+    } catch (err) {
+      alert("Network error submitting reply.");
+    }
+  }
+
+  function logout() {
+    localStorage.removeItem("inquiries_user");
+    window.location.href = "index.html";
+  }
+
+  initOfficeDashboard();
+</script>
+</body>
+</html>
