@@ -2,167 +2,388 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <title>Inquiries Agent - Personnel & Admin Dashboard</title>
-  <style>
-    body { font-family: Arial, sans-serif; background: #f4f6f9; margin:0; padding:20px; }
-    .container { max-width: 1000px; margin: 0 auto; }
-    .card { background: white; padding: 20px; border-radius: 8px; box-shadow: 0 2px 10px rgba(0,0,0,0.05); margin-bottom: 20px; }
-    h2 { color: #003366; margin-top: 0; }
-    table { width: 100%; border-collapse: collapse; margin-top: 15px; }
-    th, td { border: 1px solid #cbd5e1; padding: 10px; text-align: left; font-size: 13px; }
-    th { background: #003366; color: white; }
-    .btn { background: #003366; color: white; border: none; padding: 10px 15px; border-radius: 5px; cursor: pointer; font-weight: bold; }
-  </style>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>PICO Admin Portal - Inquiries Agent System</title>
+  <link rel="stylesheet" href="admin-styles.css">
 </head>
 <body>
-  <div class="container">
-    <div class="card">
-      <h2>PDF Handbook & Document Ingestion</h2>
-      <input type="file" id="pdfFile" accept=".pdf">
-      <button class="btn" onclick="uploadPDF()">Upload & Index PDF</button>
-      <div id="uploadStatus" style="margin-top:10px; font-weight:bold; font-size:13px;"></div>
+
+  <!-- Top Navigation Bar -->
+  <div class="navbar">
+    <div style="display: flex; align-items: center; gap: 12px;">
+      <h1>PICO Administration Portal</h1>
+      <span class="admin-badge">Public Information & Communication Office</span>
+    </div>
+    <button class="btn-logout" onclick="logout()">Logout</button>
+  </div>
+
+  <!-- Main Container -->
+  <div class="dashboard-container">
+    
+    <!-- Left Navigation Sidebar -->
+    <div class="sidebar">
+      <button class="nav-tab active" onclick="switchTab('queueTab', this)">📥 Global Inquiry Queue</button>
+      <button class="nav-tab" onclick="switchTab('knowledgeTab', this)">📚 Knowledge Base Indexing</button>
+      <button class="nav-tab" onclick="switchTab('officesTab', this)">🏢 Office & Routing Setup</button>
     </div>
 
-    <div class="card">
-      <h2>Unanswered Inquiry Audit Logs</h2>
-      <button class="btn" onclick="loadLogs()">Refresh Audit Logs</button>
-      <table id="logsTable">
-        <thead>
-          <tr>
-            <th>Timestamp</th>
-            <th>Session ID</th>
-            <th>User Query</th>
-            <th>Routed Office</th>
-          </tr>
-        </thead>
-        <tbody></tbody>
-      </table>
+    <!-- Right Content Panel -->
+    <div class="content-area">
+
+      <!-- TAB 1: Global Inquiry Queue & Re-routing -->
+      <div id="queueTab" class="tab-content active">
+        <h2 class="section-title">Unanswered & Escalated Inquiries</h2>
+        <div style="display: flex; justify-content: space-between; margin-bottom: 15px;">
+          <div style="display:flex; gap:10px; align-items:center;">
+            <label style="font-size:13px; font-weight:bold;">Filter Status:</label>
+            <select id="statusFilter" onchange="loadUnansweredQueue()" style="padding: 6px; border-radius: 4px; border: 1px solid #cbd5e1;">
+              <option value="pending">Pending</option>
+              <option value="resolved">Resolved</option>
+              <option value="all">All</option>
+            </select>
+          </div>
+          <button class="btn-primary" onclick="loadUnansweredQueue()">🔄 Refresh Queue</button>
+        </div>
+
+        <table>
+          <thead>
+            <tr>
+              <th style="width: 50px;">ID</th>
+              <th>Student Message</th>
+              <th>Assigned Office</th>
+              <th style="width: 90px;">Status</th>
+              <th style="width: 280px;">Action / Resolution</th>
+            </tr>
+          </thead>
+          <tbody id="queueTableBody">
+            <tr><td colspan="5" style="text-align: center;">Loading inquiries...</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <!-- TAB 2: Knowledge Base Management (ChromaDB Ingestion) -->
+      <div id="knowledgeTab" class="tab-content">
+        <h2 class="section-title">Index Knowledge Base into Vector Storage</h2>
+        <form id="knowledgeForm" onsubmit="submitKnowledge(event)">
+          <div class="form-group">
+            <label>Topic Title or Official Question</label>
+            <input type="text" id="kbTitle" placeholder="e.g. Official Tuition Payment Procedures" required>
+          </div>
+          
+          <div class="form-group">
+            <label>Detailed Answer / Policy Document Content</label>
+            <textarea id="kbContent" placeholder="Enter complete answer details, office hours, location, or procedures..." required></textarea>
+          </div>
+
+          <div style="display: flex; gap: 20px;">
+            <div class="form-group" style="flex: 1;">
+              <label>Target Office / Owner</label>
+              <select id="kbOfficeSelect" required>
+                <option value="">-- Select Office --</option>
+              </select>
+            </div>
+
+            <div class="form-group" style="flex: 1;">
+              <label>Access Visibility Scope</label>
+              <select id="kbVisibility" required>
+                <option value="public">🌐 Public (Guests & Unregistered Users)</option>
+                <option value="internal">🔒 Internal Only (Registered Students & Employees)</option>
+              </select>
+            </div>
+          </div>
+
+          <button type="submit" class="btn-primary">⚡ Index into ChromaDB</button>
+        </form>
+      </div>
+
+      <!-- TAB 3: Office Management & Automated Routing Keywords -->
+      <div id="officesTab" class="tab-content">
+        <h2 class="section-title">Manage University Offices & Routing Policies</h2>
+        
+        <!-- Office Creation Form -->
+        <div style="background: #f8fafc; padding: 15px; border-radius: 8px; border: 1px solid #e2e8f0; margin-bottom: 20px;">
+          <h3 style="margin-top:0; font-size:15px; color:#003366;" id="officeFormTitle">Add New Office</h3>
+          <form id="officeForm" onsubmit="saveOffice(event)" style="display:grid; grid-template-columns: 1fr 1fr; gap: 15px;">
+            <input type="hidden" id="officeId">
+            <div class="form-group">
+              <label>Office Name</label>
+              <input type="text" id="officeName" placeholder="e.g. Office of the Registrar" required>
+            </div>
+            <div class="form-group">
+              <label>Office Code</label>
+              <input type="text" id="officeCode" placeholder="e.g. REG" required>
+            </div>
+            <div class="form-group" style="grid-column: span 2;">
+              <label>Routing Keywords & Description (Used by AI Classifier)</label>
+              <textarea id="officeDesc" placeholder="e.g. Transcripts, grades, evaluation, enrollment clearances, subject dropping" required></textarea>
+            </div>
+            <div style="grid-column: span 2; display: flex; gap: 10px;">
+              <button type="submit" class="btn-primary" id="saveOfficeBtn">Save Office</button>
+              <button type="button" class="btn-secondary" style="background:#cbd5e1; color:#1e293b;" onclick="resetOfficeForm()">Cancel</button>
+            </div>
+          </form>
+        </div>
+
+        <!-- Registered Offices List -->
+        <table>
+          <thead>
+            <tr>
+              <th style="width: 50px;">ID</th>
+              <th style="width: 80px;">Code</th>
+              <th>Office Name</th>
+              <th>Routing Keywords / Description</th>
+              <th style="width: 80px;">Action</th>
+            </tr>
+          </thead>
+          <tbody id="officesTableBody">
+            <tr><td colspan="5" style="text-align: center;">Loading offices...</td></tr>
+          </tbody>
+        </table>
+      </div>
+
     </div>
   </div>
 
-  <div class="container my-4">
-    <div class="d-flex justify-content-between align-items-center mb-3">
-        <h3>Pending Department Inquiries</h3>
-        <button class="btn btn-outline-secondary btn-sm" onclick="loadPendingLogs()">Refresh Queue</button>
-    </div>
-    <div id="pendingLogsContainer">
-        <p class="text-muted">Loading pending inquiries...</p>
-    </div>
-</div>
-
 <script>
   const API_BASE = "https://inquiries-agent-system.onrender.com";
+  let globalOffices = [];
 
-  async function uploadPDF() {
-    const fileInput = document.getElementById('pdfFile');
-    const status = document.getElementById('uploadStatus');
-    if (!fileInput.files[0]) { alert("Please select a PDF file."); return; }
+  function switchTab(tabId, element) {
+    document.querySelectorAll('.tab-content').forEach(tab => tab.classList.remove('active'));
+    document.querySelectorAll('.nav-tab').forEach(btn => btn.classList.remove('active'));
+    document.getElementById(tabId).classList.add('active');
+    element.classList.add('active');
 
-    const formData = new FormData();
-    formData.append("file", fileInput.files[0]);
-    status.innerText = "Indexing document into ChromaDB...";
-
-    try {
-      const res = await fetch(`${API_BASE}/admin/upload-pdf`, { method: "POST", body: formData });
-      const data = await res.json();
-      status.innerText = res.ok ? `Success: ${data.message}` : `Error: ${data.detail}`;
-    } catch (err) { status.innerText = "Upload failed."; }
+    if (tabId === 'queueTab') loadUnansweredQueue();
+    if (tabId === 'officesTab') loadOffices();
+    if (tabId === 'knowledgeTab') populateOfficeDropdowns();
   }
 
-  async function loadLogs() {
+  async function loadOffices() {
     try {
-      const res = await fetch(`${API_BASE}/admin/unanswered-logs`);
+      const res = await fetch(`${API_BASE}/offices`);
+      if (!res.ok) throw new Error("Failed to load offices");
       const data = await res.json();
-      const tbody = document.querySelector("#logsTable tbody");
-      tbody.innerHTML = "";
-
-      data.logs.forEach(log => {
-        const tr = document.createElement("tr");
-        tr.innerHTML = `<td>${log.Timestamp}</td><td>${log.Session_ID}</td><td>${log.User_Query}</td><td>${log.Routed_Office}</td>`;
-        tbody.appendChild(tr);
-      });
-    } catch (err) { console.error("Error loading logs", err); }
-  }
-
-  loadLogs();
-
-  async function loadPendingLogs() {
-    const container = document.getElementById("pendingLogsContainer");
-    
-    try {
-        const response = await fetch(`${API_BASE}/admin/unanswered`);
-        const data = await response.json();
-        
-        if (!data.unanswered_logs || data.unanswered_logs.length === 0) {
-            container.innerHTML = `
-                <div class="alert alert-success">No pending inquiries for your office. All clear!</div>
-            `;
-            return;
-        }
-
-        container.innerHTML = data.unanswered_logs.map(log => `
-            <div class="card mb-3 shadow-sm border-start border-warning border-4" id="log-card-${log.id}">
-                <div class="card-body">
-                    <div class="d-flex justify-content-between align-items-start mb-2">
-                        <h6 class="card-subtitle text-muted">Inquiry #${log.id} • Session: ${escapeHtml(log.session_id)}</h6>
-                        <span class="badge bg-warning text-dark">Pending</span>
-                    </div>
-                    <p class="card-text fs-5"><strong>User Question:</strong> "${escapeHtml(log.user_message)}"</p>
-                    <small class="text-muted d-block mb-3">Received: ${log.created_at || 'Recently'}</small>
-                    
-                    <div class="input-group">
-                        <input type="text" id="reply-input-${log.id}" class="form-control" placeholder="Type official office answer...">
-                        <button class="btn btn-primary" onclick="submitOfficeReply(${log.id})">Send Answer</button>
-                    </div>
-                </div>
-            </div>
-        `).join('');
-
+      globalOffices = data.offices;
+      renderOfficesTable(globalOffices);
+      populateOfficeDropdowns();
     } catch (err) {
-        container.innerHTML = `<div class="alert alert-danger">Error loading queue: ${err.message}</div>`;
+      console.error(err);
     }
-}
+  }
 
-async function submitOfficeReply(logId) {
-    const replyInput = document.getElementById(`reply-input-${logId}`);
-    const replyText = replyInput.value.trim();
-
-    if (!replyText) {
-        alert("Please enter a response before submitting.");
-        return;
+  function renderOfficesTable(offices) {
+    const tbody = document.getElementById("officesTableBody");
+    if (!offices || offices.length === 0) {
+      tbody.innerHTML = `<tr><td colspan="5" style="text-align:center;">No offices found. Add one above!</td></tr>`;
+      return;
     }
+    tbody.innerHTML = offices.map(o => `
+      <tr>
+        <td>${o.id}</td>
+        <td><strong>${o.code}</strong></td>
+        <td>${o.name}</td>
+        <td>${o.description || 'N/A'}</td>
+        <td>
+          <button class="btn-secondary" onclick="editOffice(${o.id}, '${o.name}', '${o.code}', \`${o.description || ''}\`)">Edit</button>
+        </td>
+      </tr>
+    `).join('');
+  }
+
+  function populateOfficeDropdowns() {
+    const kbSelect = document.getElementById("kbOfficeSelect");
+    if (kbSelect) {
+      kbSelect.innerHTML = '<option value="">-- Select Office --</option>' + 
+        globalOffices.map(o => `<option value="${o.id}">${o.name} (${o.code})</option>`).join('');
+    }
+  }
+
+  async function loadUnansweredQueue() {
+    const status = document.getElementById("statusFilter").value;
+    const tbody = document.getElementById("queueTableBody");
+    tbody.innerHTML = `<tr><td colspan="5" style="text-align: center;">Fetching inquiries...</td></tr>`;
 
     try {
-        const res = await fetch(`${API_BASE}/admin/resolve-log`, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ log_id: logId, reply: replyText })
-        });
+      const res = await fetch(`${API_BASE}/admin/unanswered?status=${status}`);
+      if (!res.ok) throw new Error("Failed to load queue");
+      const data = await res.json();
+      renderQueueTable(data.logs || []);
+    } catch (err) {
+      tbody.innerHTML = `<tr><td colspan="5" style="text-align: center; color: red;">Error loading queue. Check server logs.</td></tr>`;
+    }
+  }
 
-        if (res.ok) {
-            // Remove resolved card from UI without full page refresh
-            const logCard = document.getElementById(`log-card-${logId}`);
-            if (logCard) logCard.remove();
-            
-            // Check if queue is now empty
-            const container = document.getElementById("pendingLogsContainer");
-            if (container.children.length === 0) {
-                container.innerHTML = `<div class="alert alert-success">No pending inquiries for your office. All clear!</div>`;
+  function renderQueueTable(logs) {
+    const tbody = document.getElementById("queueTableBody");
+    if (!logs || logs.length === 0) {
+      tbody.innerHTML = `<tr><td colspan="5" style="text-align: center;">No pending inquiries found in queue.</td></tr>`;
+      return;
+    }
+
+    tbody.innerHTML = logs.map(log => {
+      const officeOptions = globalOffices.map(o => 
+        `<option value="${o.id}" ${log.office_id === o.id ? 'selected' : ''}>${o.code}</option>`
+      ).join('');
+
+      return `
+        <tr>
+          <td>${log.id}</td>
+          <td><strong>${log.user_message}</strong><br><small style="color:#64748b;">Session: ${log.session_id}</small></td>
+          <td>
+            <select id="reroute-${log.id}" onchange="rerouteInquiry(${log.id})" style="padding: 4px; border-radius:4px;">
+              <option value="">Unassigned (PICO Central)</option>
+              ${officeOptions}
+            </select>
+          </td>
+          <td>
+            <span class="status-badge status-${log.status.toLowerCase()}">${log.status}</span>
+          </td>
+          <td>
+            ${log.status === 'resolved' ? 
+              `<div style="font-size:12px; color:#166534;"><strong>Reply:</strong> ${log.office_reply}</div>` : 
+              `<div class="form-group" style="margin-bottom:6px;">
+                <textarea id="reply-${log.id}" placeholder="Type official response..." style="min-height:50px;"></textarea>
+               </div>
+               <button class="btn-primary" onclick="resolveInquiry(${log.id})">Send & Index Answer</button>`
             }
-        } else {
-            alert("Failed to submit reply. Check server logs.");
-        }
+          </td>
+        </tr>
+      `;
+    }).join('');
+  }
+
+  async function resolveInquiry(logId) {
+    const replyText = document.getElementById(`reply-${logId}`).value.trim();
+    if (!replyText) { alert("Please enter an answer before resolving."); return; }
+
+    try {
+      const res = await fetch(`${API_BASE}/admin/resolve-log`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ log_id: logId, reply: replyText })
+      });
+
+      if (res.ok) {
+        alert("Inquiry resolved and automatically indexed into knowledge base!");
+        loadUnansweredQueue();
+      } else {
+        const err = await res.json();
+        alert(`Error: ${err.detail || 'Could not resolve inquiry.'}`);
+      }
     } catch (err) {
-        alert(`Error: ${err.message}`);
+      alert("Network error connecting to backend.");
     }
-}
+  }
 
-function escapeHtml(str) {
-    return str ? str.replace(/[&<>"']/g, m => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'}[m])) : '';
-}
+  async function rerouteInquiry(logId) {
+    const targetOfficeId = document.getElementById(`reroute-${logId}`).value;
+    try {
+      const res = await fetch(`${API_BASE}/admin/re-route-log`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ 
+          log_id: logId, 
+          office_id: targetOfficeId ? parseInt(targetOfficeId) : null 
+        })
+      });
 
-// Automatically load queue on page load
-document.addEventListener("DOMContentLoaded", loadPendingLogs);
+      if (res.ok) {
+        alert("Inquiry successfully re-routed to department queue.");
+        loadUnansweredQueue();
+      } else {
+        alert("Failed to re-route inquiry.");
+      }
+    } catch (err) {
+      console.error(err);
+    }
+  }
+
+  async function submitKnowledge(e) {
+    e.preventDefault();
+    const title = document.getElementById("kbTitle").value.trim();
+    const content = document.getElementById("kbContent").value.trim();
+    const officeId = document.getElementById("kbOfficeSelect").value;
+    const visibility = document.getElementById("kbVisibility").value;
+
+    const payload = {
+      title,
+      content,
+      office_id: officeId ? parseInt(officeId) : null,
+      visibility
+    };
+
+    try {
+      const res = await fetch(`${API_BASE}/admin/knowledge/index`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload)
+      });
+
+      if (res.ok) {
+        alert("Knowledge successfully indexed into ChromaDB vector database!");
+        document.getElementById("knowledgeForm").reset();
+      } else {
+        alert("Error indexing document.");
+      }
+    } catch (err) {
+      alert("Network error indexing knowledge.");
+    }
+  }
+
+  async function saveOffice(e) {
+    e.preventDefault();
+    const id = document.getElementById("officeId").value;
+    const name = document.getElementById("officeName").value.trim();
+    const code = document.getElementById("officeCode").value.trim();
+    const description = document.getElementById("officeDesc").value.trim();
+
+    const endpoint = id ? `${API_BASE}/offices/${id}` : `${API_BASE}/offices`;
+    const method = id ? "PUT" : "POST";
+
+    try {
+      const res = await fetch(endpoint, {
+        method: method,
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name, code, description })
+      });
+
+      if (res.ok) {
+        alert(`Office ${id ? 'updated' : 'created'} successfully!`);
+        resetOfficeForm();
+        loadOffices();
+      } else {
+        const err = await res.json();
+        alert(`Error: ${err.detail}`);
+      }
+    } catch (err) {
+      alert("Error saving office.");
+    }
+  }
+
+  function editOffice(id, name, code, description) {
+    document.getElementById("officeFormTitle").innerText = "Edit Office";
+    document.getElementById("officeId").value = id;
+    document.getElementById("officeName").value = name;
+    document.getElementById("officeCode").value = code;
+    document.getElementById("officeDesc").value = description;
+    document.getElementById("saveOfficeBtn").innerText = "Update Office";
+  }
+
+  function resetOfficeForm() {
+    document.getElementById("officeFormTitle").innerText = "Add New Office";
+    document.getElementById("officeId").value = "";
+    document.getElementById("officeForm").reset();
+    document.getElementById("saveOfficeBtn").innerText = "Save Office";
+  }
+
+  function logout() {
+    localStorage.removeItem("inquiries_admin_token");
+    window.location.href = "index.html";
+  }
+
+  loadOffices();
+  loadUnansweredQueue();
 </script>
 </body>
 </html>
