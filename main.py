@@ -169,8 +169,8 @@ class ChatResponse(BaseModel):
     reply: str
     source: str
     session_id: str
-    department_forward: Optional[str] = None
-    response_time_seconds: float
+    department_forward: Optional[int] = None
+    response_time_seconds: float = 0.0
 
 class ResolveLogRequest(BaseModel):
     log_id: int
@@ -186,6 +186,21 @@ HARDCODED_FAQS = {
 # =========================================================
 # HELPER FUNCTIONS
 # =========================================================
+def check_rule_based_faq(message: str) -> Optional[str]:
+    msg_clean = message.lower().strip()
+    for key, response in HARDCODED_FAQS.items():
+        if key in msg_clean:
+            return response
+    return None
+
+def generate_gemini_response(prompt: str) -> str:
+    response = ai_client.models.generate_content(
+        model="gemini-2.5-flash",
+        contents=prompt,
+    )
+    raw_text = response.text or ""
+    return raw_text.strip()
+
 def save_chat_turn(session_id: str, role: str, content: str):
     conn = get_db_connection()
     if conn:
@@ -236,14 +251,24 @@ def chunk_text(text: str, chunk_size: int = 500, overlap: int = 50) -> list[str]
         start += chunk_size - overlap
     return chunks
 
-def reciprocal_rank_fusion(vector_docs: list[str], bm25_docs: list[str], k: int = 60, top_n: int = 3) -> list[str]:
-    scores = {}
-    for rank, doc in enumerate(vector_docs):
-        scores[doc] = scores.get(doc, 0.0) + (1.0 / (k + rank + 1))
-    for rank, doc in enumerate(bm25_docs):
-        scores[doc] = scores.get(doc, 0.0) + (1.0 / (k + rank + 1))
-    sorted_docs = sorted(scores.items(), key=lambda item: item[1], reverse=True)
-    return [doc for doc, score in sorted_docs[:top_n]]
+def retrieve_rag_context(user_msg: str, top_k: int = 3) -> list[str]:
+    try:
+        emb_res = ai_client.models.embed_content(
+            model="gemini-embedding-001",
+            contents=user_msg,
+        )
+        if emb_res.embeddings and len(emb_res.embeddings) > 0 and emb_res.embeddings[0].values:
+            query_embedding = list(emb_res.embeddings[0].values)
+            results = collection.query(
+                query_embeddings=[query_embedding],  # type: ignore
+                n_results=top_k
+            )
+            docs = results.get("documents")
+            if docs and len(docs) > 0 and docs[0]:
+                return [str(d) for d in docs[0] if d is not None]
+    except Exception as e:
+        print(f"⚠️ Vector Search Error: {e}")
+    return []
 
 # =========================================================
 # API ENDPOINTS
@@ -292,113 +317,90 @@ def login_user(req: LoginRequest):
     }
 
 @app.post("/chat", response_model=ChatResponse)
-def chat_endpoint(request: ChatRequest):
+async def chat_endpoint(payload: ChatRequest):
     start_time = time.time()
-    user_query = request.message.strip()
-    session_id = request.session_id.strip()
-    query_lower = user_query.lower()
+    user_msg = payload.message.strip()
+    session_id = payload.session_id or "guest_default"
+    office_id = payload.office_id
 
-    # LAYER 1: Rule-Based FAQ
-    for key, value in HARDCODED_FAQS.items():
-        if key in query_lower:
-            save_chat_turn(session_id, "user", user_query)
-            save_chat_turn(session_id, "assistant", value)
-            return ChatResponse(
-                reply=value, 
-                source="rule_based", 
-                session_id=session_id,
-                response_time_seconds=round(time.time() - start_time, 4)
-            )
+    # 1. Rule-Based FAQ Check
+    rule_reply = check_rule_based_faq(user_msg)
+    if rule_reply:
+        save_chat_turn(session_id, "user", user_msg)
+        save_chat_turn(session_id, "assistant", rule_reply)
+        return ChatResponse(
+            reply=rule_reply,
+            source="rule_based",
+            session_id=session_id,
+            department_forward=office_id,
+            response_time_seconds=round(time.time() - start_time, 4)
+        )
 
-    # LAYER 2: Hybrid Retrieval (BM25 + ChromaDB Vector)
-    db_data = collection.get()
-    all_docs = db_data.get("documents", []) if db_data else []
+    # 2. Vector Search / Hybrid RAG Retrieval (ChromaDB)
+    context_docs = retrieve_rag_context(user_msg, top_k=3)
 
-    retrieved_docs = []
-    if all_docs:
+    if context_docs:
+        context_text = "\n---\n".join(context_docs)
+        history_logs = get_session_history_from_db(session_id)
+        history_str = "\n".join([f"{msg['role'].capitalize()}: {msg['content']}" for msg in history_logs]) if history_logs else "No prior history."
+
+        prompt = f"""You are an official University Information Assistant.
+Answer the student's question accurately based ONLY on the provided context excerpts and conversation history.
+
+Context:
+{context_text}
+
+History:
+{history_str}
+
+Question: {user_msg}
+
+If the context does not contain relevant information to answer, reply strictly with: UNANSWERED
+"""
         try:
-            emb_res = ai_client.models.embed_content(
-                model="gemini-embedding-001",
-                contents=user_query,
-            )
-            query_vector = emb_res.embeddings[0].values
-            v_results = collection.query(query_embeddings=[query_vector], n_results=5)
-            vector_docs = v_results["documents"][0] if v_results["documents"] else []
-        except Exception:
-            vector_docs = []
+            ai_reply = generate_gemini_response(prompt)
+            if "UNANSWERED" not in ai_reply.upper():
+                save_chat_turn(session_id, "user", user_msg)
+                save_chat_turn(session_id, "assistant", ai_reply)
+                return ChatResponse(
+                    reply=ai_reply,
+                    source="rag_hybrid_gemini",
+                    session_id=session_id,
+                    department_forward=office_id,
+                    response_time_seconds=round(time.time() - start_time, 4)
+                )
+        except Exception as e:
+            print(f"⚠️ Gemini Generation Error: {e}")
 
-        tokenized_corpus = [tokenize(doc) for doc in all_docs]
-        bm25 = BM25Okapi(tokenized_corpus)
-        query_tokens = tokenize(user_query)
-        bm25_docs = bm25.get_top_n(query_tokens, all_docs, n=5)
+    # 3. Fallback Router (Unanswered Queries)
+    target_office_id = office_id
 
-        retrieved_docs = reciprocal_rank_fusion(vector_docs, bm25_docs, top_n=3)
+    # Automatically route unanswered guest queries directly to PICO
+    if not target_office_id and session_id.startswith("guest_"):
+        conn = get_db_connection()
+        if conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT id FROM offices WHERE code = 'PICO' OR name LIKE '%Public Information%' LIMIT 1")
+            pico_row = cursor.fetchone()
+            if pico_row:
+                target_office_id = pico_row['id'] if isinstance(pico_row, dict) else pico_row[0]
+            cursor.close()
+            conn.close()
 
-    if not retrieved_docs:
-        log_unanswered_query_to_db(session_id, user_query, request.office_id)
-        fallback_msg = "No official university record found for this topic. Your inquiry has been routed to the department queue."
-        save_chat_turn(session_id, "user", user_query)
-        save_chat_turn(session_id, "assistant", fallback_msg)
-        return ChatResponse(
-            reply=fallback_msg,
-            source="fallback_router",
-            session_id=session_id,
-            response_time_seconds=round(time.time() - start_time, 4)
-        )
+    # Log into unanswered_logs database table
+    log_unanswered_query_to_db(session_id, user_msg, target_office_id)
+    fallback_msg = "No official university record found for this topic. Your inquiry has been routed to the Public Information and Communication Office (PICO) for staff review."
 
-    context_text = "\n---\n".join(retrieved_docs)
-    history_logs = get_session_history_from_db(session_id)
-    history_str = "\n".join([f"{msg['role'].capitalize()}: {msg['content']}" for msg in history_logs]) if history_logs else "No prior interaction."
+    save_chat_turn(session_id, "user", user_msg)
+    save_chat_turn(session_id, "assistant", fallback_msg)
 
-    prompt = f"""
-    You are an official University Information Assistant for the Inquiries Agent System.
-    Answer the student's question accurately based ONLY on the provided public university context excerpts and the prior conversation history.
-
-    Guidelines:
-    1. Resolve pronouns and ambiguous references using the Recent Conversation History.
-    2. You may count, summarize, or list items directly present in the context excerpts.
-    3. If the context and history do not contain relevant information to answer the question, reply strictly with: "UNANSWERED".
-
-    University Context Excerpts:
-    {context_text}
-
-    Recent Conversation History:
-    {history_str}
-
-    Student Current Question: {user_query}
-    """
-
-    try:
-        response = ai_client.models.generate_content(
-            model="gemini-3.6-flash",
-            contents=prompt,
-        )
-        answer = response.text.strip()
-
-        if "UNANSWERED" in answer.upper():
-            log_unanswered_query_to_db(session_id, user_query, request.office_id)
-            fallback_msg = "This detail is not explicitly found in our public university records. Your request was forwarded to the department queue."
-            save_chat_turn(session_id, "user", user_query)
-            save_chat_turn(session_id, "assistant", fallback_msg)
-            return ChatResponse(
-                reply=fallback_msg,
-                source="fallback_router",
-                session_id=session_id,
-                response_time_seconds=round(time.time() - start_time, 4)
-            )
-
-        save_chat_turn(session_id, "user", user_query)
-        save_chat_turn(session_id, "assistant", answer)
-
-        return ChatResponse(
-            reply=answer, 
-            source="rag_hybrid_gemini", 
-            session_id=session_id,
-            response_time_seconds=round(time.time() - start_time, 4)
-        )
-
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Gemini API Error: {str(e)}")
+    return ChatResponse(
+        reply=fallback_msg,
+        source="fallback_router",
+        session_id=session_id,
+        department_forward=target_office_id,
+        response_time_seconds=round(time.time() - start_time, 4)
+    )
 
 # =========================================================
 # OFFICE MANAGEMENT ENDPOINTS
@@ -491,7 +493,6 @@ def resolve_unanswered_log(payload: ResolveLogRequest):
         raise HTTPException(status_code=500, detail="Database connection failed")
     
     cursor = conn.cursor()
-    # 1. Fetch user_message for embedding
     cursor.execute("SELECT user_message FROM unanswered_logs WHERE id = %s", (payload.log_id,))
     row = cursor.fetchone()
     if not row:
@@ -501,7 +502,6 @@ def resolve_unanswered_log(payload: ResolveLogRequest):
     
     user_message = row['user_message'] if isinstance(row, dict) else row[0]
 
-    # 2. Update status in MySQL
     cursor.execute(
         """
         UPDATE unanswered_logs 
@@ -514,20 +514,20 @@ def resolve_unanswered_log(payload: ResolveLogRequest):
     cursor.close()
     conn.close()
 
-    # 3. Automatically index Q&A into ChromaDB so RAG learns the answer
     try:
         qa_doc = f"Question: {user_message}\nAnswer: {payload.reply}"
         emb_res = ai_client.models.embed_content(
             model="gemini-embedding-001",
             contents=qa_doc,
         )
-        embedding = list(emb_res.embeddings[0].values)
-        collection.upsert(
-            documents=[qa_doc],
-            embeddings=[embedding],  # type: ignore
-            metadatas=[{"source": "resolved_inquiry", "log_id": payload.log_id}],
-            ids=[f"resolved_log_{payload.log_id}"]
-        )
+        if emb_res.embeddings and len(emb_res.embeddings) > 0 and emb_res.embeddings[0].values:
+            embedding = list(emb_res.embeddings[0].values)
+            collection.upsert(
+                documents=[qa_doc],
+                embeddings=[embedding],  # type: ignore
+                metadatas=[{"source": "resolved_inquiry", "log_id": payload.log_id}],
+                ids=[f"resolved_log_{payload.log_id}"]
+            )
     except Exception as e:
         print(f"⚠️ ChromaDB indexing warning: {e}")
 
@@ -535,7 +535,6 @@ def resolve_unanswered_log(payload: ResolveLogRequest):
 
 @app.post("/admin/sync-resolved-to-chroma", dependencies=[Depends(require_roles([UserRole.ADMIN]))])
 def sync_resolved_to_chroma():
-    """One-time sync to push all previously resolved MySQL logs into ChromaDB."""
     conn = get_db_connection()
     if not conn:
         raise HTTPException(status_code=500, detail="Database connection failed")
@@ -558,14 +557,15 @@ def sync_resolved_to_chroma():
                 model="gemini-embedding-001",
                 contents=qa_doc,
             )
-            embedding = list(emb_res.embeddings[0].values)
-            collection.upsert(
-                documents=[qa_doc],
-                embeddings=[embedding],  # type: ignore
-                metadatas=[{"source": "resolved_inquiry", "log_id": log_id}],
-                ids=[f"resolved_log_{log_id}"]
-            )
-            count += 1
+            if emb_res.embeddings and len(emb_res.embeddings) > 0 and emb_res.embeddings[0].values:
+                embedding = list(emb_res.embeddings[0].values)
+                collection.upsert(
+                    documents=[qa_doc],
+                    embeddings=[embedding],  # type: ignore
+                    metadatas=[{"source": "resolved_inquiry", "log_id": log_id}],
+                    ids=[f"resolved_log_{log_id}"]
+                )
+                count += 1
 
     return {"message": f"Successfully synced {count} resolved inquiries into ChromaDB vector store."}
 
@@ -612,7 +612,7 @@ async def upload_pdf_handbook(file: UploadFile = File(...)):
             contents=batch_chunks,
         )
         
-        batch_embeddings = [list(emb.values) for emb in emb_response.embeddings]  # type: ignore
+        batch_embeddings = [list(emb.values) for emb in emb_response.embeddings] if emb_response.embeddings else []  # type: ignore
         
         collection.upsert(
             documents=batch_chunks,
