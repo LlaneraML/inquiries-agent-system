@@ -1,0 +1,103 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>University Inquiries Portal - Login</title>
+  <style>
+    * { box-sizing: border-box; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; }
+    body { background: #f4f6f9; margin: 0; padding: 0; display: flex; justify-content: center; align-items: center; min-height: 100vh; }
+    .login-card { background: white; width: 100%; max-width: 420px; padding: 35px; border-radius: 12px; box-shadow: 0 4px 20px rgba(0,0,0,0.08); text-align: center; }
+    .brand-header { margin-bottom: 25px; }
+    .brand-header h1 { font-size: 22px; color: #003366; margin: 0 0 5px 0; }
+    .brand-header p { font-size: 13px; color: #64748b; margin: 0; }
+    .form-group { text-align: left; margin-bottom: 18px; }
+    .form-group label { display: block; font-size: 12px; font-weight: bold; color: #334155; margin-bottom: 6px; }
+    .form-group input { width: 100%; padding: 12px; border: 1px solid #cbd5e1; border-radius: 8px; font-size: 14px; outline: none; }
+    .form-group input:focus { border-color: #003366; }
+    .btn-login { width: 100%; background: #003366; color: white; border: none; padding: 12px; border-radius: 8px; font-size: 14px; font-weight: bold; cursor: pointer; transition: background 0.2s; }
+    .btn-login:hover { background: #002244; }
+    .divider { margin: 20px 0; border-top: 1px solid #e2e8f0; position: relative; }
+    .divider span { position: absolute; top: -10px; left: 50%; transform: translateX(-50%); background: white; padding: 0 10px; font-size: 11px; color: #94a3b8; font-weight: bold; }
+    .btn-guest { width: 100%; background: #e0f2fe; color: #0369a1; border: 1px solid #bae6fd; padding: 10px; border-radius: 8px; font-size: 13px; font-weight: bold; cursor: pointer; }
+    .btn-guest:hover { background: #bae6fd; }
+    #loginError { color: #dc2626; font-size: 13px; margin-top: 12px; display: none; }
+  </style>
+</head>
+<body>
+
+  <div class="login-card">
+    <div class="brand-header">
+      <h1>Inquiries Agent System</h1>
+      <p>Official University Information & Assistance Portal</p>
+    </div>
+
+    <form id="loginForm" onsubmit="handleLogin(event)">
+      <div class="form-group">
+        <label for="username">Username / Student ID</label>
+        <input type="text" id="username" placeholder="Enter your username" required>
+      </div>
+
+      <div class="form-group">
+        <label for="password">Password</label>
+        <input type="password" id="password" placeholder="Enter your password" required>
+      </div>
+
+      <button type="submit" class="btn-login">Sign In</button>
+      <div id="loginError"></div>
+    </form>
+
+    <div class="divider"><span>OR</span></div>
+
+    <button class="btn-guest" onclick="continueAsGuest()">Continue as Guest Visitor</button>
+  </div>
+
+<script>
+  const API_BASE = "https://inquiries-agent-system.onrender.com";
+
+  async function handleLogin(e) {
+    e.preventDefault();
+    const username = document.getElementById("username").value.trim();
+    const password = document.getElementById("password").value.trim();
+    const errorDiv = document.getElementById("loginError");
+
+    errorDiv.style.display = "none";
+
+    try {
+      const res = await fetch(`${API_BASE}/auth/login`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ username, password })
+      });
+
+      const data = await res.json();
+
+      if (res.ok) {
+        // Save user details locally
+        localStorage.setItem("inquiries_user", JSON.stringify(data.user));
+
+        // Role-Based Redirection
+        if (data.user.role === 'admin') {
+          window.location.href = "admin.html";
+        } else if (data.user.role === 'employee') {
+          window.location.href = "office-dashboard.html";
+        } else {
+          window.location.href = "index.html";
+        }
+      } else {
+        errorDiv.innerText = data.detail || "Invalid credentials.";
+        errorDiv.style.display = "block";
+      }
+    } catch (err) {
+      errorDiv.innerText = "Error connecting to authentication server.";
+      errorDiv.style.display = "block";
+    }
+  }
+
+  function continueAsGuest() {
+    localStorage.removeItem("inquiries_user");
+    window.location.href = "index.html";
+  }
+</script>
+</body>
+</html>

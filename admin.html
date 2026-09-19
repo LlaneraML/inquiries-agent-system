@@ -17,7 +17,7 @@
     <button class="btn-logout" onclick="logout()">Logout</button>
   </div>
 
-  <!-- Main Container -->
+  <!-- Main Dashboard Container -->
   <div class="dashboard-container">
     
     <!-- Left Navigation Sidebar -->
@@ -25,6 +25,7 @@
       <button class="nav-tab active" onclick="switchTab('queueTab', this)">📥 Global Inquiry Queue</button>
       <button class="nav-tab" onclick="switchTab('knowledgeTab', this)">📚 Knowledge Base Indexing</button>
       <button class="nav-tab" onclick="switchTab('officesTab', this)">🏢 Office & Routing Setup</button>
+      <button class="nav-tab" onclick="switchTab('usersTab', this)">👤 User Accounts</button>
     </div>
 
     <!-- Right Content Panel -->
@@ -141,6 +142,75 @@
         </table>
       </div>
 
+      <!-- TAB 4: User Accounts Management (Students, Employees, Admins) -->
+      <div id="usersTab" class="tab-content">
+        <h2 class="section-title">Manage User Accounts & Roles</h2>
+
+        <!-- Create User Form -->
+        <div style="background: #f8fafc; padding: 20px; border-radius: 8px; border: 1px solid #e2e8f0; margin-bottom: 20px;">
+          <h3 style="margin-top:0; font-size:15px; color:#003366;">Create New Account</h3>
+          <form id="createUserForm" onsubmit="submitCreateUser(event)" style="display:grid; grid-template-columns: 1fr 1fr; gap: 15px;">
+            
+            <div class="form-group">
+              <label>Full Name</label>
+              <input type="text" id="userFullName" placeholder="e.g. Maria Santos" required>
+            </div>
+
+            <div class="form-group">
+              <label>Username / Student ID</label>
+              <input type="text" id="userUsername" placeholder="e.g. msantos" required>
+            </div>
+
+            <div class="form-group">
+              <label>Institutional Email</label>
+              <input type="email" id="userEmail" placeholder="msantos@isatu.edu.ph">
+            </div>
+
+            <div class="form-group">
+              <label>Password</label>
+              <input type="password" id="userPassword" placeholder="Enter account password" required>
+            </div>
+
+            <div class="form-group">
+              <label>Account Role</label>
+              <select id="userRole" onchange="toggleOfficeSelect()" required>
+                <option value="student">Student</option>
+                <option value="employee">Employee / Office Staff</option>
+                <option value="admin">PICO Super Admin</option>
+              </select>
+            </div>
+
+            <div class="form-group" id="officeSelectGroup" style="display: none;">
+              <label>Assigned Department Office</label>
+              <select id="userOfficeSelect">
+                <option value="">-- Select Office (For Employees) --</option>
+              </select>
+            </div>
+
+            <div style="grid-column: span 2;">
+              <button type="submit" class="btn-primary">➕ Create Account</button>
+            </div>
+          </form>
+        </div>
+
+        <!-- Registered Users List -->
+        <table>
+          <thead>
+            <tr>
+              <th style="width: 50px;">ID</th>
+              <th>Full Name</th>
+              <th>Username</th>
+              <th>Email</th>
+              <th>Role</th>
+              <th>Assigned Office</th>
+            </tr>
+          </thead>
+          <tbody id="usersTableBody">
+            <tr><td colspan="6" style="text-align: center;">Loading user accounts...</td></tr>
+          </tbody>
+        </table>
+      </div>
+
     </div>
   </div>
 
@@ -148,6 +218,7 @@
   const API_BASE = "https://inquiries-agent-system.onrender.com";
   let globalOffices = [];
 
+  // Tab Navigation Controller
   function switchTab(tabId, element) {
     document.querySelectorAll('.tab-content').forEach(tab => tab.classList.remove('active'));
     document.querySelectorAll('.nav-tab').forEach(btn => btn.classList.remove('active'));
@@ -157,25 +228,30 @@
     if (tabId === 'queueTab') loadUnansweredQueue();
     if (tabId === 'officesTab') loadOffices();
     if (tabId === 'knowledgeTab') populateOfficeDropdowns();
+    if (tabId === 'usersTab') {
+      loadUsers();
+      populateOfficeDropdowns();
+    }
   }
 
+  // Fetch Registered Offices
   async function loadOffices() {
     try {
       const res = await fetch(`${API_BASE}/offices`);
       if (!res.ok) throw new Error("Failed to load offices");
       const data = await res.json();
-      globalOffices = data.offices;
+      globalOffices = data.offices || [];
       renderOfficesTable(globalOffices);
       populateOfficeDropdowns();
     } catch (err) {
-      console.error(err);
+      console.error("Error loading offices:", err);
     }
   }
 
   function renderOfficesTable(offices) {
     const tbody = document.getElementById("officesTableBody");
     if (!offices || offices.length === 0) {
-      tbody.innerHTML = `<tr><td colspan="5" style="text-align:center;">No offices found. Add one above!</td></tr>`;
+      tbody.innerHTML = `<tr><td colspan="5" style="text-align:center;">No offices found. Create one above!</td></tr>`;
       return;
     }
     tbody.innerHTML = offices.map(o => `
@@ -193,12 +269,16 @@
 
   function populateOfficeDropdowns() {
     const kbSelect = document.getElementById("kbOfficeSelect");
-    if (kbSelect) {
-      kbSelect.innerHTML = '<option value="">-- Select Office --</option>' + 
-        globalOffices.map(o => `<option value="${o.id}">${o.name} (${o.code})</option>`).join('');
-    }
+    const userOfficeSelect = document.getElementById("userOfficeSelect");
+
+    const optionsHtml = '<option value="">-- Select Office --</option>' + 
+      globalOffices.map(o => `<option value="${o.id}">${o.name} (${o.code})</option>`).join('');
+
+    if (kbSelect) kbSelect.innerHTML = optionsHtml;
+    if (userOfficeSelect) userOfficeSelect.innerHTML = optionsHtml;
   }
 
+  // Load Unanswered Global Queue
   async function loadUnansweredQueue() {
     const status = document.getElementById("statusFilter").value;
     const tbody = document.getElementById("queueTableBody");
@@ -208,16 +288,16 @@
       const res = await fetch(`${API_BASE}/admin/unanswered?status=${status}`);
       if (!res.ok) throw new Error("Failed to load queue");
       const data = await res.json();
-      renderQueueTable(data.logs || []);
+      renderQueueTable(data.unanswered_logs || data.logs || []);
     } catch (err) {
-      tbody.innerHTML = `<tr><td colspan="5" style="text-align: center; color: red;">Error loading queue. Check server logs.</td></tr>`;
+      tbody.innerHTML = `<tr><td colspan="5" style="text-align: center; color: red;">Error loading queue. Check backend logs.</td></tr>`;
     }
   }
 
   function renderQueueTable(logs) {
     const tbody = document.getElementById("queueTableBody");
     if (!logs || logs.length === 0) {
-      tbody.innerHTML = `<tr><td colspan="5" style="text-align: center;">No pending inquiries found in queue.</td></tr>`;
+      tbody.innerHTML = `<tr><td colspan="5" style="text-align: center;">No inquiries found in queue.</td></tr>`;
       return;
     }
 
@@ -265,7 +345,7 @@
       });
 
       if (res.ok) {
-        alert("Inquiry resolved and automatically indexed into knowledge base!");
+        alert("Inquiry resolved and automatically indexed into ChromaDB!");
         loadUnansweredQueue();
       } else {
         const err = await res.json();
@@ -289,7 +369,7 @@
       });
 
       if (res.ok) {
-        alert("Inquiry successfully re-routed to department queue.");
+        alert("Inquiry re-routed successfully.");
         loadUnansweredQueue();
       } else {
         alert("Failed to re-route inquiry.");
@@ -321,10 +401,10 @@
       });
 
       if (res.ok) {
-        alert("Knowledge successfully indexed into ChromaDB vector database!");
+        alert("Knowledge document indexed into ChromaDB vector database!");
         document.getElementById("knowledgeForm").reset();
       } else {
-        alert("Error indexing document.");
+        alert("Error indexing knowledge document.");
       }
     } catch (err) {
       alert("Network error indexing knowledge.");
@@ -377,11 +457,91 @@
     document.getElementById("saveOfficeBtn").innerText = "Save Office";
   }
 
-  function logout() {
-    localStorage.removeItem("inquiries_admin_token");
-    window.location.href = "index.html";
+  // --- USER ACCOUNTS MANAGEMENT JS ---
+
+  function toggleOfficeSelect() {
+    const role = document.getElementById("userRole").value;
+    const officeGroup = document.getElementById("officeSelectGroup");
+    officeGroup.style.display = (role === "employee") ? "block" : "none";
   }
 
+  async function loadUsers() {
+    const tbody = document.getElementById("usersTableBody");
+    tbody.innerHTML = `<tr><td colspan="6" style="text-align: center;">Loading user accounts...</td></tr>`;
+
+    try {
+      const res = await fetch(`${API_BASE}/admin/users`);
+      if (!res.ok) throw new Error("Failed to load users");
+      const data = await res.json();
+      renderUsersTable(data.users || []);
+    } catch (err) {
+      tbody.innerHTML = `<tr><td colspan="6" style="text-align: center; color: red;">Error loading accounts.</td></tr>`;
+    }
+  }
+
+  function renderUsersTable(users) {
+    const tbody = document.getElementById("usersTableBody");
+    if (!users || users.length === 0) {
+      tbody.innerHTML = `<tr><td colspan="6" style="text-align: center;">No user accounts registered yet.</td></tr>`;
+      return;
+    }
+    tbody.innerHTML = users.map(u => `
+      <tr>
+        <td>${u.id}</td>
+        <td><strong>${u.full_name}</strong></td>
+        <td>${u.username}</td>
+        <td>${u.email || 'N/A'}</td>
+        <td><span class="status-badge status-resolved">${u.role.toUpperCase()}</span></td>
+        <td>${u.office_code || 'N/A'}</td>
+      </tr>
+    `).join('');
+  }
+
+  async function submitCreateUser(e) {
+    e.preventDefault();
+    const full_name = document.getElementById("userFullName").value.trim();
+    const username = document.getElementById("userUsername").value.trim();
+    const email = document.getElementById("userEmail").value.trim();
+    const password = document.getElementById("userPassword").value.trim();
+    const role = document.getElementById("userRole").value;
+    const office_id = document.getElementById("userOfficeSelect").value;
+
+    const payload = {
+      full_name,
+      username,
+      email: email || null,
+      password,
+      role,
+      office_id: office_id ? parseInt(office_id) : null
+    };
+
+    try {
+      const res = await fetch(`${API_BASE}/admin/users`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload)
+      });
+
+      if (res.ok) {
+        alert("User account created successfully!");
+        document.getElementById("createUserForm").reset();
+        toggleOfficeSelect();
+        loadUsers();
+      } else {
+        const err = await res.json();
+        alert(`Error: ${err.detail || 'Could not create account.'}`);
+      }
+    } catch (err) {
+      alert("Network error creating user account.");
+    }
+  }
+
+  function logout() {
+    localStorage.removeItem("inquiries_user");
+    window.location.href = "login.html";
+  }
+
+  // Initial Startup Execution
   loadOffices();
   loadUnansweredQueue();
 </script>

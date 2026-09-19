@@ -74,6 +74,7 @@ def init_mysql_tables():
                 username VARCHAR(50) UNIQUE NOT NULL,
                 password VARCHAR(255) NOT NULL,
                 full_name VARCHAR(100) NOT NULL,
+                email VARCHAR(150) UNIQUE NULL,
                 role VARCHAR(20) DEFAULT 'student',
                 office_id INT NULL,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
@@ -126,7 +127,6 @@ class UserRole(str, Enum):
     EMPLOYEE = "employee"
 
 def get_current_user():
-    # Placeholder user context (returns admin role for testing)
     return {"username": "admin", "role": "admin"}
 
 def require_roles(allowed_roles: List[UserRole]):
@@ -155,10 +155,19 @@ class RegisterRequest(BaseModel):
     username: str
     password: str
     full_name: str
+    email: Optional[str] = None
 
 class LoginRequest(BaseModel):
     username: str
     password: str
+
+class CreateUserRequest(BaseModel):
+    username: str
+    password: str
+    full_name: str
+    email: Optional[str] = None
+    role: str = "student"
+    office_id: Optional[int] = None
 
 class ChatRequest(BaseModel):
     message: str
@@ -286,14 +295,14 @@ def register_user(req: RegisterRequest):
     try:
         with conn.cursor() as cursor:
             cursor.execute(
-                "INSERT INTO users (username, password, full_name, role) VALUES (%s, %s, %s, %s)",
-                (req.username.strip(), hashed_pwd, req.full_name.strip(), "student")
+                "INSERT INTO users (username, password, full_name, email, role) VALUES (%s, %s, %s, %s, %s)",
+                (req.username.strip(), hashed_pwd, req.full_name.strip(), req.email, "student")
             )
         conn.close()
         return {"status": "Success", "message": "Student account registered successfully!"}
     except pymysql.err.IntegrityError:
         conn.close()
-        raise HTTPException(status_code=400, detail="Username already exists.")
+        raise HTTPException(status_code=400, detail="Username or email already exists.")
 
 @app.post("/auth/login")
 def login_user(req: LoginRequest):
@@ -303,7 +312,7 @@ def login_user(req: LoginRequest):
     hashed_pwd = hash_password(req.password)
     with conn.cursor() as cursor:
         cursor.execute(
-            "SELECT id, username, full_name, role FROM users WHERE username = %s AND password = %s",
+            "SELECT id, username, full_name, email, role, office_id FROM users WHERE username = %s AND password = %s",
             (req.username.strip(), hashed_pwd)
         )
         user = cursor.fetchone()
@@ -316,6 +325,49 @@ def login_user(req: LoginRequest):
         "session_id": f"student_{user['username']}"
     }
 
+# =========================================================
+# USER ACCOUNT MANAGEMENT ENDPOINTS (PICO ADMIN)
+# =========================================================
+@app.post("/admin/users", dependencies=[Depends(require_roles([UserRole.ADMIN]))])
+def create_user_account(req: CreateUserRequest):
+    conn = get_db_connection()
+    if not conn:
+        raise HTTPException(status_code=500, detail="Database connection failed.")
+    hashed_pwd = hash_password(req.password)
+    try:
+        with conn.cursor() as cursor:
+            cursor.execute(
+                """
+                INSERT INTO users (username, password, full_name, email, role, office_id)
+                VALUES (%s, %s, %s, %s, %s, %s)
+                """,
+                (req.username.strip(), hashed_pwd, req.full_name.strip(), req.email, req.role, req.office_id)
+            )
+        conn.close()
+        return {"status": "Success", "message": f"Account '{req.username}' ({req.role}) created successfully!"}
+    except pymysql.err.IntegrityError:
+        conn.close()
+        raise HTTPException(status_code=400, detail="Username or email already exists.")
+
+@app.get("/admin/users", dependencies=[Depends(require_roles([UserRole.ADMIN]))])
+def list_user_accounts():
+    conn = get_db_connection()
+    if not conn:
+        raise HTTPException(status_code=500, detail="Database connection failed.")
+    with conn.cursor() as cursor:
+        cursor.execute("""
+            SELECT u.id, u.username, u.full_name, u.email, u.role, u.office_id, o.code as office_code, u.created_at
+            FROM users u
+            LEFT JOIN offices o ON u.office_id = o.id
+            ORDER BY u.id DESC
+        """)
+        users = cursor.fetchall()
+    conn.close()
+    return {"users": users}
+
+# =========================================================
+# CHAT ENDPOINT
+# =========================================================
 @app.post("/chat", response_model=ChatResponse)
 async def chat_endpoint(payload: ChatRequest):
     start_time = time.time()
