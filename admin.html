@@ -497,44 +497,55 @@
     `).join('');
   }
 
-  async function submitCreateUser(e) {
-    e.preventDefault();
-    const full_name = document.getElementById("userFullName").value.trim();
-    const username = document.getElementById("userUsername").value.trim();
-    const email = document.getElementById("userEmail").value.trim();
-    const password = document.getElementById("userPassword").value.trim();
-    const role = document.getElementById("userRole").value;
-    const office_id = document.getElementById("userOfficeSelect").value;
+ async function submitCreateUser(e) {
+  e.preventDefault();
+  const full_name = document.getElementById("userFullName").value.trim();
+  const username = document.getElementById("userUsername").value.trim();
+  const emailInput = document.getElementById("userEmail").value.trim();
+  const password = document.getElementById("userPassword").value.trim();
+  const role = document.getElementById("userRole").value;
+  const office_id = document.getElementById("userOfficeSelect").value;
 
-    const payload = {
-      full_name,
-      username,
-      email: email || null,
-      password,
-      role,
-      office_id: office_id ? parseInt(office_id) : null
-    };
+  // Convert empty string email to null so MySQL doesn't trigger duplicate empty key errors
+  const payload = {
+    full_name,
+    username,
+    email: emailInput.length > 0 ? emailInput : null,
+    password,
+    role,
+    office_id: office_id ? parseInt(office_id) : null
+  };
 
-    try {
-      const res = await fetch(`${API_BASE}/admin/users`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload)
-      });
+  try {
+    const res = await fetch(`${API_BASE}/admin/users`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload)
+    });
 
-      if (res.ok) {
-        alert("User account created successfully!");
-        document.getElementById("createUserForm").reset();
-        toggleOfficeSelect();
-        loadUsers();
-      } else {
-        const err = await res.json();
-        alert(`Error: ${err.detail || 'Could not create account.'}`);
-      }
-    } catch (err) {
-      alert("Network error creating user account.");
+    // Handle non-JSON or HTTP error responses safely
+    let data;
+    const contentType = res.headers.get("content-type");
+    if (contentType && contentType.includes("application/json")) {
+      data = await res.json();
+    } else {
+      const text = await res.text();
+      data = { detail: text || `HTTP Status ${res.status}` };
     }
+
+    if (res.ok) {
+      alert("User account created successfully!");
+      document.getElementById("createUserForm").reset();
+      toggleOfficeSelect();
+      loadUsers();
+    } else {
+      alert(`Backend Error (${res.status}): ${JSON.stringify(data.detail || data)}`);
+    }
+  } catch (err) {
+    console.error("Fetch Exception:", err);
+    alert(`Browser Connection Error: ${err.message}. Check browser console (F12).`);
   }
+}
 
   function logout() {
     localStorage.removeItem("inquiries_user");
