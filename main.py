@@ -53,12 +53,13 @@ def hash_password(password: str) -> str:
     return hashlib.sha256(password.encode()).hexdigest()
 
 # =========================================================
-# DATABASE TABLE INITIALIZATION
+# DATABASE TABLE INITIALIZATION & AUTO-MIGRATION
 # =========================================================
 def init_mysql_tables():
     conn = get_db_connection()
     if conn:
         with conn.cursor() as cursor:
+            # 1. Create Offices Table
             cursor.execute("""
             CREATE TABLE IF NOT EXISTS offices (
                 id INT AUTO_INCREMENT PRIMARY KEY,
@@ -68,6 +69,8 @@ def init_mysql_tables():
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             );
             """)
+
+            # 2. Create Users Table
             cursor.execute("""
             CREATE TABLE IF NOT EXISTS users (
                 id INT AUTO_INCREMENT PRIMARY KEY,
@@ -81,6 +84,25 @@ def init_mysql_tables():
                 FOREIGN KEY (office_id) REFERENCES offices(id) ON DELETE SET NULL
             );
             """)
+
+            # Auto-Migration Checks: Safely add missing columns to legacy tables
+            try:
+                cursor.execute("ALTER TABLE users ADD COLUMN email VARCHAR(150) NULL AFTER full_name;")
+                cursor.execute("CREATE UNIQUE INDEX idx_users_email ON users(email);")
+            except Exception:
+                pass  # Email column already exists
+
+            try:
+                cursor.execute("ALTER TABLE users ADD COLUMN role VARCHAR(20) DEFAULT 'student' AFTER email;")
+            except Exception:
+                pass  # Role column already exists
+
+            try:
+                cursor.execute("ALTER TABLE users ADD COLUMN office_id INT NULL AFTER role;")
+            except Exception:
+                pass  # Office_id column already exists
+
+            # 3. Create Chat History Table
             cursor.execute("""
             CREATE TABLE IF NOT EXISTS chat_history (
                 id INT AUTO_INCREMENT PRIMARY KEY,
@@ -91,6 +113,8 @@ def init_mysql_tables():
                 INDEX (session_id)
             );
             """)
+
+            # 4. Create Unanswered Logs Table
             cursor.execute("""
             CREATE TABLE IF NOT EXISTS unanswered_logs (
                 id INT AUTO_INCREMENT PRIMARY KEY,
@@ -116,7 +140,7 @@ app = FastAPI(title="Inquiries Agent API", version="2.1.0")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
-    allow_credentials=True,
+    allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -348,6 +372,9 @@ def create_user_account(req: CreateUserRequest):
     except pymysql.err.IntegrityError:
         conn.close()
         raise HTTPException(status_code=400, detail="Username or email already exists.")
+    except Exception as e:
+        conn.close()
+        raise HTTPException(status_code=500, detail=f"Database execution error: {str(e)}")
 
 @app.get("/admin/users", dependencies=[Depends(require_roles([UserRole.ADMIN]))])
 def list_user_accounts():
