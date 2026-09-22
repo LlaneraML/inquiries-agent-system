@@ -13,7 +13,7 @@
     <h1>Inquiries Agent: University Information Portal</h1>
     <div class="user-section">
       <span class="user-badge" id="userBadge">Guest Mode</span>
-      <button class="btn-auth" id="authBtn" onclick="openAuthModal()">Student Login</button>
+      <button class="btn-auth" id="authBtn" onclick="window.location.href='login.html'">Student Login</button>
     </div>
   </div>
 
@@ -51,47 +51,9 @@
     </div>
   </div>
 
-  <!-- Auth Modal (Login / Institutional Registration) -->
-  <div class="modal-overlay" id="authModal">
-    <div class="modal">
-      <h2 id="modalTitle">Student / Employee Login</h2>
-      
-      <div class="form-group" id="fullNameGroup" style="display: none;">
-        <label>Full Name</label>
-        <input type="text" id="regFullName" placeholder="e.g. Marco Llanera">
-      </div>
-
-      <div class="form-group" id="emailGroup" style="display: none;">
-        <label>Institutional Email (@isatu.edu.ph)</label>
-        <input type="email" id="regEmail" placeholder="username@isatu.edu.ph">
-      </div>
-
-      <div class="form-group">
-        <label>Username / Student ID</label>
-        <input type="text" id="authUsername">
-      </div>
-
-      <div class="form-group">
-        <label>Password</label>
-        <input type="password" id="authPassword">
-      </div>
-
-      <div id="modalError" style="color: red; font-size: 12px; margin-bottom: 10px;"></div>
-
-      <div style="display: flex; justify-content: space-between; align-items: center; margin-top: 15px;">
-        <span style="font-size: 12px; color: #0369a1; cursor: pointer; text-decoration: underline;" id="toggleAuth" onclick="toggleAuthMode()">Need an account? Register</span>
-        <div>
-          <button class="btn-auth" style="background: #cbd5e1; color: #1e293b; margin-right: 5px;" onclick="closeAuthModal()">Cancel</button>
-          <button class="btn-auth" onclick="submitAuth()">Submit</button>
-        </div>
-      </div>
-    </div>
-  </div>
-
 <script>
   const API_BASE = "https://inquiries-agent-system.onrender.com";
   let currentUser = JSON.parse(localStorage.getItem('inquiries_user')) || null;
-  let isRegistering = false;
 
   function getSessionId() {
     if (currentUser) return `student_${currentUser.username}`;
@@ -113,20 +75,8 @@
     } else {
       badge.innerText = "Guest Mode";
       authBtn.innerText = "Student Login";
-      authBtn.onclick = openAuthModal;
+      authBtn.onclick = function() { window.location.href = 'login.html'; };
     }
-  }
-
-  function openAuthModal() { document.getElementById('authModal').style.display = 'flex'; }
-  function closeAuthModal() { document.getElementById('authModal').style.display = 'none'; }
-  
-  function toggleAuthMode() {
-    isRegistering = !isRegistering;
-    document.getElementById('modalTitle').innerText = isRegistering ? "Register University Account" : "Student / Employee Login";
-    document.getElementById('fullNameGroup').style.display = isRegistering ? "block" : "none";
-    document.getElementById('emailGroup').style.display = isRegistering ? "block" : "none";
-    document.getElementById('toggleAuth').innerText = isRegistering ? "Already have an account? Login" : "Need an account? Register";
-    document.getElementById('modalError').innerText = "";
   }
 
   async function loadOffices() {
@@ -146,46 +96,6 @@
       }
     } catch (err) {
       console.warn("Could not load offices:", err);
-    }
-  }
-
-  async function submitAuth() {
-    const username = document.getElementById('authUsername').value.trim();
-    const password = document.getElementById('authPassword').value.trim();
-    const fullName = document.getElementById('regFullName').value.trim();
-    const email = document.getElementById('regEmail').value.trim();
-    const errorDiv = document.getElementById('modalError');
-
-    if (isRegistering && email && !email.endsWith("@isatu.edu.ph")) {
-      errorDiv.innerText = "Registration is restricted to official university emails (@isatu.edu.ph).";
-      return;
-    }
-
-    const endpoint = isRegistering ? "/auth/register" : "/auth/login";
-    const payload = isRegistering ? { username, password, full_name: fullName, email } : { username, password };
-
-    try {
-      const res = await fetch(`${API_BASE}${endpoint}`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload)
-      });
-      const data = await res.json();
-      if (res.ok) {
-        if (isRegistering) { 
-          alert("Registration successful! Please log in."); 
-          toggleAuthMode(); 
-        } else {
-          currentUser = data.user;
-          localStorage.setItem('inquiries_user', JSON.stringify(currentUser));
-          updateUIState();
-          closeAuthModal();
-        }
-      } else { 
-        errorDiv.innerText = data.detail || "Authentication failed."; 
-      }
-    } catch (err) { 
-      errorDiv.innerText = "Server error connecting to authentication endpoint."; 
     }
   }
 
