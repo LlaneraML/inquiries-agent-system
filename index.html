@@ -75,7 +75,10 @@
     } else {
       badge.innerText = "Guest Mode";
       authBtn.innerText = "Student Login";
-      authBtn.onclick = function() { window.location.href = 'login.html'; };
+      // Ensure click behavior redirects directly to login.html
+      authBtn.onclick = function() {
+        window.location.href = 'login.html';
+      };
     }
   }
 
