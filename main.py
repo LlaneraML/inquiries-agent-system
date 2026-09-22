@@ -228,7 +228,7 @@ def check_rule_based_faq(message: str) -> Optional[str]:
 
 def generate_gemini_response(prompt: str) -> str:
     response = ai_client.models.generate_content(
-        model="gemini-2.5-flash",
+        model="gemini-3.6-flash",
         contents=prompt,
     )
     raw_text = response.text or ""
