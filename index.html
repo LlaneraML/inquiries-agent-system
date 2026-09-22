@@ -75,7 +75,6 @@
     } else {
       badge.innerText = "Guest Mode";
       authBtn.innerText = "Student Login";
-      // Ensure click behavior redirects directly to login.html
       authBtn.onclick = function() {
         window.location.href = 'login.html';
       };
@@ -145,7 +144,6 @@
     displayUserMessage(input);
     if (inputField) inputField.value = "";
 
-    // Show typing state
     typingIndicator.style.display = "block";
     const chatBox = document.getElementById('chatBox');
     chatBox.scrollTop = chatBox.scrollHeight;
