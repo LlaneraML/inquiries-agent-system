@@ -62,7 +62,7 @@
         </table>
       </div>
 
-      <!-- TAB 2: Knowledge Base Management (PDF Upload & Manual Ingestion) -->
+      <!-- TAB 2: Knowledge Base Management -->
       <div id="knowledgeTab" class="tab-content">
         <h2 class="section-title">Index Knowledge Base into Vector Storage</h2>
 
@@ -81,7 +81,27 @@
           <div id="pdfUploadStatus" style="margin-top: 12px; font-weight: bold; font-size: 13px;"></div>
         </div>
 
-        <!-- Card 2: Manual Text Ingestion -->
+        <!-- Card 2: List of Indexed PDF Documents -->
+        <div style="background: #ffffff; padding: 20px; border-radius: 8px; border: 1px solid #e2e8f0; margin-bottom: 25px;">
+          <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px;">
+            <h3 style="margin:0; font-size:16px; color:#003366;">📂 Indexed PDF Documents</h3>
+            <button class="btn-secondary" onclick="loadUploadedFiles()" style="padding: 4px 10px; font-size: 12px;">🔄 Refresh List</button>
+          </div>
+          <table>
+            <thead>
+              <tr>
+                <th>Filename</th>
+                <th style="width: 100px;">File Size</th>
+                <th style="width: 180px;">Upload Timestamp</th>
+              </tr>
+            </thead>
+            <tbody id="pdfFilesTableBody">
+              <tr><td colspan="3" style="text-align: center;">Loading uploaded files...</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <!-- Card 3: Manual Text Ingestion -->
         <div style="background: #ffffff; padding: 20px; border-radius: 8px; border: 1px solid #e2e8f0;">
           <h3 style="margin-top:0; font-size:16px; color:#003366;">✏️ Manual Entry / Q&A Ingestion</h3>
           <form id="knowledgeForm" onsubmit="submitKnowledge(event)">
@@ -117,11 +137,10 @@
         </div>
       </div>
 
-      <!-- TAB 3: Office Management & Automated Routing Keywords -->
+      <!-- TAB 3: Office Management -->
       <div id="officesTab" class="tab-content">
         <h2 class="section-title">Manage University Offices & Routing Policies</h2>
         
-        <!-- Office Creation Form -->
         <div style="background: #f8fafc; padding: 15px; border-radius: 8px; border: 1px solid #e2e8f0; margin-bottom: 20px;">
           <h3 style="margin-top:0; font-size:15px; color:#003366;" id="officeFormTitle">Add New Office</h3>
           <form id="officeForm" onsubmit="saveOffice(event)" style="display:grid; grid-template-columns: 1fr 1fr; gap: 15px;">
@@ -145,7 +164,6 @@
           </form>
         </div>
 
-        <!-- Registered Offices List -->
         <table>
           <thead>
             <tr>
@@ -162,11 +180,10 @@
         </table>
       </div>
 
-      <!-- TAB 4: User Accounts Management (Students, Employees, Admins) -->
+      <!-- TAB 4: User Accounts Management -->
       <div id="usersTab" class="tab-content">
         <h2 class="section-title">Manage User Accounts & Roles</h2>
 
-        <!-- Create User Form -->
         <div style="background: #f8fafc; padding: 20px; border-radius: 8px; border: 1px solid #e2e8f0; margin-bottom: 20px;">
           <h3 style="margin-top:0; font-size:15px; color:#003366;">Create New Account</h3>
           <form id="createUserForm" onsubmit="submitCreateUser(event)" style="display:grid; grid-template-columns: 1fr 1fr; gap: 15px;">
@@ -213,7 +230,6 @@
           </form>
         </div>
 
-        <!-- Registered Users List -->
         <table>
           <thead>
             <tr>
@@ -247,7 +263,10 @@
 
     if (tabId === 'queueTab') loadUnansweredQueue();
     if (tabId === 'officesTab') loadOffices();
-    if (tabId === 'knowledgeTab') populateOfficeDropdowns();
+    if (tabId === 'knowledgeTab') {
+      populateOfficeDropdowns();
+      loadUploadedFiles();
+    }
     if (tabId === 'usersTab') {
       loadUsers();
       populateOfficeDropdowns();
@@ -445,6 +464,7 @@
         statusDiv.innerText = `✅ Successfully indexed '${data.filename}'! Extracted ${data.total_pages} pages into ${data.total_chunks_indexed} vector chunks in ${data.indexing_time_seconds}s.`;
         alert(`PDF Document Indexed Successfully!\n\nFile: ${data.filename}\nPages: ${data.total_pages}\nChunks Indexed: ${data.total_chunks_indexed}\nTime: ${data.indexing_time_seconds}s`);
         document.getElementById("pdfUploadForm").reset();
+        loadUploadedFiles();
       } else {
         statusDiv.style.color = "#dc2626";
         statusDiv.innerText = `❌ Error: ${data.detail || 'Could not upload PDF.'}`;
@@ -461,7 +481,37 @@
     }
   }
 
-  // Manual Ingestion Handler
+  // Fetch and render list of uploaded PDF files
+  async function loadUploadedFiles() {
+    const tbody = document.getElementById("pdfFilesTableBody");
+    if (!tbody) return;
+    
+    tbody.innerHTML = `<tr><td colspan="3" style="text-align: center;">Loading uploaded files...</td></tr>`;
+
+    try {
+      const res = await fetch(`${API_BASE}/admin/uploaded-files`);
+      if (!res.ok) throw new Error("Failed to load files");
+      const data = await res.json();
+      
+      if (!data.files || data.files.length === 0) {
+        tbody.innerHTML = `<tr><td colspan="3" style="text-align: center;">No PDF documents uploaded yet.</td></tr>`;
+        return;
+      }
+
+      tbody.innerHTML = data.files.map(file => `
+        <tr>
+          <td><strong>📄 ${file.filename}</strong></td>
+          <td>${file.size_kb} KB</td>
+          <td>${file.uploaded_at}</td>
+        </tr>
+      `).join('');
+    } catch (err) {
+      console.error(err);
+      tbody.innerHTML = `<tr><td colspan="3" style="text-align: center; color: red;">Error loading uploaded files.</td></tr>`;
+    }
+  }
+
+  // Manual Entry Ingestion Handler
   async function submitKnowledge(e) {
     e.preventDefault();
     const title = document.getElementById("kbTitle").value.trim();

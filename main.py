@@ -135,7 +135,7 @@ init_mysql_tables()
 # =========================================================
 # FASTAPI APP & AUTHENTICATION SETUP
 # =========================================================
-app = FastAPI(title="Inquiries Agent API", version="2.1.0")
+app = FastAPI(title="Inquiries Agent API", version="2.2.0")
 
 app.add_middleware(
     CORSMiddleware,
@@ -271,9 +271,6 @@ def log_unanswered_query_to_db(session_id: str, user_message: str, office_id: Op
         conn.commit()
         cursor.close()
         conn.close()
-
-def tokenize(text: str) -> list[str]:
-    return re.findall(r"\w+", text.lower())
 
 def chunk_text(text: str, chunk_size: int = 500, overlap: int = 50) -> list[str]:
     chunks = []
@@ -454,7 +451,6 @@ If the context does not contain relevant information to answer, reply strictly w
     # 3. Fallback Router (Unanswered Queries)
     target_office_id = office_id
 
-    # Automatically route unanswered guest queries directly to PICO
     if not target_office_id and session_id.startswith("guest_"):
         conn = get_db_connection()
         if conn:
@@ -466,7 +462,6 @@ If the context does not contain relevant information to answer, reply strictly w
             cursor.close()
             conn.close()
 
-    # Log into unanswered_logs database table
     log_unanswered_query_to_db(session_id, user_msg, target_office_id)
     fallback_msg = "No official university record found for this topic. Your inquiry has been routed to the Public Information and Communication Office (PICO) for staff review."
 
@@ -649,7 +644,7 @@ def sync_resolved_to_chroma():
     return {"message": f"Successfully synced {count} resolved inquiries into ChromaDB vector store."}
 
 # =========================================================
-# PDF HANDBOOK UPLOAD ENDPOINT
+# PDF HANDBOOK UPLOAD & FILE LIST ENDPOINTS
 # =========================================================
 @app.post("/admin/upload-pdf")
 async def upload_pdf_handbook(file: UploadFile = File(...)):
@@ -708,3 +703,18 @@ async def upload_pdf_handbook(file: UploadFile = File(...)):
         "indexing_time_seconds": round(time.time() - start_time, 2),
         "message": f"Indexed '{file.filename}' successfully."
     }
+
+@app.get("/admin/uploaded-files", dependencies=[Depends(require_roles([UserRole.ADMIN]))])
+def list_uploaded_files():
+    docs_dir = "documents"
+    files = []
+    if os.path.exists(docs_dir):
+        for filename in os.listdir(docs_dir):
+            if filename.endswith(".pdf"):
+                filepath = os.path.join(docs_dir, filename)
+                files.append({
+                    "filename": filename,
+                    "size_kb": round(os.path.getsize(filepath) / 1024, 2),
+                    "uploaded_at": str(datetime.fromtimestamp(os.path.getmtime(filepath)))[:19]
+                })
+    return {"files": files}
