@@ -62,39 +62,59 @@
         </table>
       </div>
 
-      <!-- TAB 2: Knowledge Base Management (ChromaDB Ingestion) -->
+      <!-- TAB 2: Knowledge Base Management (PDF Upload & Manual Ingestion) -->
       <div id="knowledgeTab" class="tab-content">
         <h2 class="section-title">Index Knowledge Base into Vector Storage</h2>
-        <form id="knowledgeForm" onsubmit="submitKnowledge(event)">
-          <div class="form-group">
-            <label>Topic Title or Official Question</label>
-            <input type="text" id="kbTitle" placeholder="e.g. Official Tuition Payment Procedures" required>
-          </div>
-          
-          <div class="form-group">
-            <label>Detailed Answer / Policy Document Content</label>
-            <textarea id="kbContent" placeholder="Enter complete answer details, office hours, location, or procedures..." required></textarea>
-          </div>
 
-          <div style="display: flex; gap: 20px;">
-            <div class="form-group" style="flex: 1;">
-              <label>Target Office / Owner</label>
-              <select id="kbOfficeSelect" required>
-                <option value="">-- Select Office --</option>
-              </select>
+        <!-- Card 1: PDF Handbook Upload -->
+        <div style="background: #f8fafc; padding: 20px; border-radius: 8px; border: 1px solid #e2e8f0; margin-bottom: 25px;">
+          <h3 style="margin-top:0; font-size:16px; color:#003366;">📄 Upload PDF Handbook / Policy Document</h3>
+          <p style="font-size: 13px; color: #64748b; margin-bottom: 15px;">
+            Upload official university handbooks, memos, or policy documents in PDF format. The backend automatically extracts text, chunks it, and indexes vector embeddings into ChromaDB.
+          </p>
+          <form id="pdfUploadForm" onsubmit="uploadPdfHandbook(event)" style="display: flex; gap: 15px; align-items: center; flex-wrap: wrap;">
+            <div class="form-group" style="flex: 1; min-width: 250px; margin-bottom: 0;">
+              <input type="file" id="pdfFileInput" accept=".pdf" required style="padding: 8px; border: 1px solid #cbd5e1; border-radius: 4px; background: white; width: 100%;">
+            </div>
+            <button type="submit" class="btn-primary" id="uploadPdfBtn">⚡ Upload & Index PDF</button>
+          </form>
+          <div id="pdfUploadStatus" style="margin-top: 12px; font-weight: bold; font-size: 13px;"></div>
+        </div>
+
+        <!-- Card 2: Manual Text Ingestion -->
+        <div style="background: #ffffff; padding: 20px; border-radius: 8px; border: 1px solid #e2e8f0;">
+          <h3 style="margin-top:0; font-size:16px; color:#003366;">✏️ Manual Entry / Q&A Ingestion</h3>
+          <form id="knowledgeForm" onsubmit="submitKnowledge(event)">
+            <div class="form-group">
+              <label>Topic Title or Official Question</label>
+              <input type="text" id="kbTitle" placeholder="e.g. Official Tuition Payment Procedures" required>
+            </div>
+            
+            <div class="form-group">
+              <label>Detailed Answer / Policy Document Content</label>
+              <textarea id="kbContent" placeholder="Enter complete answer details, office hours, location, or procedures..." required></textarea>
             </div>
 
-            <div class="form-group" style="flex: 1;">
-              <label>Access Visibility Scope</label>
-              <select id="kbVisibility" required>
-                <option value="public">🌐 Public (Guests & Unregistered Users)</option>
-                <option value="internal">🔒 Internal Only (Registered Students & Employees)</option>
-              </select>
-            </div>
-          </div>
+            <div style="display: flex; gap: 20px;">
+              <div class="form-group" style="flex: 1;">
+                <label>Target Office / Owner</label>
+                <select id="kbOfficeSelect" required>
+                  <option value="">-- Select Office --</option>
+                </select>
+              </div>
 
-          <button type="submit" class="btn-primary">⚡ Index into ChromaDB</button>
-        </form>
+              <div class="form-group" style="flex: 1;">
+                <label>Access Visibility Scope</label>
+                <select id="kbVisibility" required>
+                  <option value="public">🌐 Public (Guests & Unregistered Users)</option>
+                  <option value="internal">🔒 Internal Only (Registered Students & Employees)</option>
+                </select>
+              </div>
+            </div>
+
+            <button type="submit" class="btn-primary">⚡ Index Manual Entry into ChromaDB</button>
+          </form>
+        </div>
       </div>
 
       <!-- TAB 3: Office Management & Automated Routing Keywords -->
@@ -379,6 +399,69 @@
     }
   }
 
+  // PDF Document Upload Handler
+  async function uploadPdfHandbook(e) {
+    e.preventDefault();
+    const fileInput = document.getElementById("pdfFileInput");
+    const btn = document.getElementById("uploadPdfBtn");
+    const statusDiv = document.getElementById("pdfUploadStatus");
+
+    if (!fileInput.files || fileInput.files.length === 0) {
+      alert("Please select a PDF file to upload.");
+      return;
+    }
+
+    const file = fileInput.files[0];
+    if (!file.name.toLowerCase().endsWith('.pdf')) {
+      alert("Only PDF files are supported.");
+      return;
+    }
+
+    const formData = new FormData();
+    formData.append("file", file);
+
+    btn.disabled = true;
+    btn.innerText = "⏳ Processing & Indexing...";
+    statusDiv.style.color = "#0284c7";
+    statusDiv.innerText = `Extracting text and generating embeddings for '${file.name}'... Please wait.`;
+
+    try {
+      const res = await fetch(`${API_BASE}/admin/upload-pdf`, {
+        method: "POST",
+        body: formData
+      });
+
+      let data;
+      const contentType = res.headers.get("content-type");
+      if (contentType && contentType.includes("application/json")) {
+        data = await res.json();
+      } else {
+        const text = await res.text();
+        data = { detail: text || `HTTP Status ${res.status}` };
+      }
+
+      if (res.ok) {
+        statusDiv.style.color = "#16a34a";
+        statusDiv.innerText = `✅ Successfully indexed '${data.filename}'! Extracted ${data.total_pages} pages into ${data.total_chunks_indexed} vector chunks in ${data.indexing_time_seconds}s.`;
+        alert(`PDF Document Indexed Successfully!\n\nFile: ${data.filename}\nPages: ${data.total_pages}\nChunks Indexed: ${data.total_chunks_indexed}\nTime: ${data.indexing_time_seconds}s`);
+        document.getElementById("pdfUploadForm").reset();
+      } else {
+        statusDiv.style.color = "#dc2626";
+        statusDiv.innerText = `❌ Error: ${data.detail || 'Could not upload PDF.'}`;
+        alert(`Upload Error (${res.status}): ${data.detail || 'Failed to upload PDF.'}`);
+      }
+    } catch (err) {
+      console.error("PDF upload exception:", err);
+      statusDiv.style.color = "#dc2626";
+      statusDiv.innerText = `❌ Network error connecting to server.`;
+      alert(`Browser Connection Error: ${err.message}. Ensure Render backend is live.`);
+    } finally {
+      btn.disabled = false;
+      btn.innerText = "⚡ Upload & Index PDF";
+    }
+  }
+
+  // Manual Ingestion Handler
   async function submitKnowledge(e) {
     e.preventDefault();
     const title = document.getElementById("kbTitle").value.trim();
@@ -497,55 +580,53 @@
     `).join('');
   }
 
- async function submitCreateUser(e) {
-  e.preventDefault();
-  const full_name = document.getElementById("userFullName").value.trim();
-  const username = document.getElementById("userUsername").value.trim();
-  const emailInput = document.getElementById("userEmail").value.trim();
-  const password = document.getElementById("userPassword").value.trim();
-  const role = document.getElementById("userRole").value;
-  const office_id = document.getElementById("userOfficeSelect").value;
+  async function submitCreateUser(e) {
+    e.preventDefault();
+    const full_name = document.getElementById("userFullName").value.trim();
+    const username = document.getElementById("userUsername").value.trim();
+    const emailInput = document.getElementById("userEmail").value.trim();
+    const password = document.getElementById("userPassword").value.trim();
+    const role = document.getElementById("userRole").value;
+    const office_id = document.getElementById("userOfficeSelect").value;
 
-  // Convert empty string email to null so MySQL doesn't trigger duplicate empty key errors
-  const payload = {
-    full_name,
-    username,
-    email: emailInput.length > 0 ? emailInput : null,
-    password,
-    role,
-    office_id: office_id ? parseInt(office_id) : null
-  };
+    const payload = {
+      full_name,
+      username,
+      email: emailInput.length > 0 ? emailInput : null,
+      password,
+      role,
+      office_id: office_id ? parseInt(office_id) : null
+    };
 
-  try {
-    const res = await fetch(`${API_BASE}/admin/users`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload)
-    });
+    try {
+      const res = await fetch(`${API_BASE}/admin/users`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload)
+      });
 
-    // Handle non-JSON or HTTP error responses safely
-    let data;
-    const contentType = res.headers.get("content-type");
-    if (contentType && contentType.includes("application/json")) {
-      data = await res.json();
-    } else {
-      const text = await res.text();
-      data = { detail: text || `HTTP Status ${res.status}` };
+      let data;
+      const contentType = res.headers.get("content-type");
+      if (contentType && contentType.includes("application/json")) {
+        data = await res.json();
+      } else {
+        const text = await res.text();
+        data = { detail: text || `HTTP Status ${res.status}` };
+      }
+
+      if (res.ok) {
+        alert("User account created successfully!");
+        document.getElementById("createUserForm").reset();
+        toggleOfficeSelect();
+        loadUsers();
+      } else {
+        alert(`Backend Error (${res.status}): ${JSON.stringify(data.detail || data)}`);
+      }
+    } catch (err) {
+      console.error("Fetch Exception:", err);
+      alert(`Browser Connection Error: ${err.message}. Check browser console (F12).`);
     }
-
-    if (res.ok) {
-      alert("User account created successfully!");
-      document.getElementById("createUserForm").reset();
-      toggleOfficeSelect();
-      loadUsers();
-    } else {
-      alert(`Backend Error (${res.status}): ${JSON.stringify(data.detail || data)}`);
-    }
-  } catch (err) {
-    console.error("Fetch Exception:", err);
-    alert(`Browser Connection Error: ${err.message}. Check browser console (F12).`);
   }
-}
 
   function logout() {
     localStorage.removeItem("inquiries_user");
